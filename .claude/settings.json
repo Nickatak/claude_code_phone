@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "WebSearch",
+      "WebFetch(domain:wiki.postmarketos.org)",
+      "Read(//etc/**)"
+    ]
+  }
+}

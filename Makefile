@@ -1,4 +1,4 @@
-.PHONY: deploy dev dev-worker typecheck add-device list-devices remove-device
+.PHONY: deploy dev dev-worker typecheck add-device list-devices remove-device restart-worker clear-conversations
 
 deploy:
 	git push
@@ -21,3 +21,11 @@ list-devices:
 
 remove-device:
 	ssh pixel-box "cd ~/remote_claude && npx tsx src/cli.ts remove"
+
+restart-worker:
+	-pkill -f "tsx src/worker.ts"
+	sleep 2
+	npx tsx src/worker.ts &
+
+clear-conversations:
+	ssh pixel-box "cd ~/remote_claude && npx tsx src/cli.ts clear"

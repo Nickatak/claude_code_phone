@@ -98,12 +98,12 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
       includePartialMessages: true,
     } : {
       allowedTools: ["WebSearch", "WebFetch"],
-      disallowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit"],
+      disallowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit", "ToolSearch"],
       permissionMode: "bypassPermissions",
       systemPrompt: "You are a helpful conversational assistant. You can search the web and fetch web pages, but you have NO access to files, bash, or any system resources. Do not attempt to use file or system tools.",
       settingSources: [],
       includePartialMessages: true,
-      maxTurns: 1,
+      maxTurns: 5,
     };
 
     if (sessionId) {

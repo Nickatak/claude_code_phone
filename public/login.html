@@ -125,6 +125,8 @@
         });
 
         if (res.ok) {
+          const data = await res.json();
+          if (data.role) localStorage.setItem("rc_role", data.role);
           window.location.href = "/";
         } else {
           error.style.display = "block";

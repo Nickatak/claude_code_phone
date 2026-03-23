@@ -450,6 +450,7 @@
     let currentConversationId = null;
     let currentCwd = null;
     let directories = [];
+    let userRole = localStorage.getItem("rc_role") || "chat";
     let isStreaming = false;
     let currentAssistantEl = null;
     let currentToolEls = {};
@@ -716,10 +717,9 @@
     function startNewChat() {
       sidebar.classList.remove("open");
 
-      if (directories.length > 0) {
+      if (userRole === "admin" && directories.length > 0) {
         showDirPicker();
       } else {
-        // No directories available, just start with default cwd
         currentConversationId = null;
         currentCwd = null;
         messagesEl.innerHTML = "";

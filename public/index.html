@@ -530,7 +530,7 @@
     function ensureAssistantBubble() {
       if (!currentAssistantEl) {
         currentAssistantEl = document.createElement("div");
-        currentAssistantEl.className = "message assistant streaming-cursor";
+        currentAssistantEl.className = "message assistant";
         currentAssistantEl.style.display = "none";
         messagesEl.appendChild(currentAssistantEl);
       }
@@ -572,6 +572,7 @@
           const bubble = ensureAssistantBubble();
           if (bubble.style.display === "none") {
             bubble.style.display = "";
+            bubble.classList.add("streaming-cursor");
           }
           bubble.textContent += event.text;
           scrollToBottom();

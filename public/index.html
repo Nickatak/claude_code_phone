@@ -244,6 +244,31 @@
       50% { opacity: 0; }
     }
 
+    /* --- Loading spinner --- */
+    .spinner {
+      align-self: flex-start;
+      display: flex;
+      gap: 4px;
+      padding: 12px 16px;
+    }
+
+    .spinner span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      animation: bounce 1.4s infinite ease-in-out both;
+    }
+
+    .spinner span:nth-child(1) { animation-delay: -0.32s; }
+    .spinner span:nth-child(2) { animation-delay: -0.16s; }
+    .spinner span:nth-child(3) { animation-delay: 0s; }
+
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(0); }
+      40% { transform: scale(1); }
+    }
+
     /* --- Input area --- */
     #input-area {
       display: flex;
@@ -565,6 +590,7 @@
 
     function handleStreamEvent(event) {
       isStreaming = true;
+      hideSpinner();
       updateSendBtn();
 
       switch (event.type) {
@@ -616,14 +642,19 @@
 
     function finalizeResponse(msg) {
       isStreaming = false;
+      hideSpinner();
 
-      // If we have fullText but the bubble is empty or hidden, render it
+      // If we have fullText, always ensure it's visible
       if (msg.fullText) {
-        const bubble = ensureAssistantBubble();
-        if (!bubble.textContent.trim()) {
+        // Check if any assistant bubble already has this text
+        const existingBubbles = messagesEl.querySelectorAll(".message.assistant");
+        const hasText = Array.from(existingBubbles).some(b => b.textContent.trim());
+
+        if (!hasText) {
+          const bubble = ensureAssistantBubble();
           bubble.textContent = msg.fullText;
+          bubble.style.display = "";
         }
-        bubble.style.display = "";
       }
 
       finalizeCurrentBubble();
@@ -633,6 +664,7 @@
 
     function showError(message) {
       isStreaming = false;
+      hideSpinner();
       const el = document.createElement("div");
       el.className = "message assistant";
       el.style.borderLeft = `3px solid var(--error)`;
@@ -666,10 +698,31 @@
       }
       ws.send(JSON.stringify(payload));
 
+      // Show spinner
+      showSpinner();
+
       inputEl.value = "";
       autoResize();
       updateSendBtn();
       scrollToBottom();
+    }
+
+    let spinnerEl = null;
+
+    function showSpinner() {
+      if (spinnerEl) return;
+      spinnerEl = document.createElement("div");
+      spinnerEl.className = "spinner";
+      spinnerEl.innerHTML = "<span></span><span></span><span></span>";
+      messagesEl.appendChild(spinnerEl);
+      scrollToBottom();
+    }
+
+    function hideSpinner() {
+      if (spinnerEl) {
+        spinnerEl.remove();
+        spinnerEl = null;
+      }
     }
 
     // --- Conversations ---

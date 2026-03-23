@@ -619,6 +619,17 @@
 
     function finalizeResponse(msg) {
       isStreaming = false;
+
+      // If we have fullText but the bubble is empty or hidden, render it
+      if (msg.fullText) {
+        const bubble = ensureAssistantBubble();
+        const textEl = bubble.querySelector(".text-content");
+        if (!textEl.textContent.trim()) {
+          textEl.textContent = msg.fullText;
+        }
+        bubble.style.display = "";
+      }
+
       finalizeCurrentBubble();
       currentToolEls = {};
       updateSendBtn();

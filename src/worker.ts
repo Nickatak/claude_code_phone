@@ -1,3 +1,22 @@
+/**
+ * Worker — runs on Nick's main PC (WSL).
+ *
+ * This is where Claude Code actually executes. The worker:
+ *   1. Connects to the relay (Pixel) via WebSocket
+ *   2. Authenticates with its device token
+ *   3. Sends a list of available project directories
+ *   4. Waits for prompts from the relay
+ *   5. Runs the Claude Code SDK for each prompt
+ *   6. Streams events (text, tool calls) back to the relay
+ *
+ * The worker handles two roles differently:
+ *   - admin: Full Claude Code — all tools, bypass permissions, project cwd
+ *   - chat: Sandboxed — only Read/Edit/Write within their sandbox dir + WebSearch/WebFetch
+ *
+ * Auto-reconnects if the relay goes down. Locks itself if rate limit
+ * utilization exceeds 50% (protection against unauthorized usage while sleeping).
+ */
+
 import "dotenv/config";
 import fs from "fs";
 import path from "path";
@@ -16,6 +35,7 @@ import type {
 
 const RELAY_URL = process.env.RELAY_URL;
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
+/** Base directory for scanning project folders (admin's project picker) */
 const WORKER_CWD = process.env.WORKER_CWD || process.cwd();
 
 if (!RELAY_URL || !AUTH_TOKEN) {
@@ -24,10 +44,21 @@ if (!RELAY_URL || !AUTH_TOKEN) {
 }
 
 const RECONNECT_DELAY_MS = 5000;
-const RATE_LIMIT_THRESHOLD = 0.5; // Lock at 50% utilization
 
+/**
+ * Rate limit kill switch.
+ * If the SDK reports utilization above this threshold, the worker locks itself
+ * and refuses all new prompts. Only a restart unlocks it.
+ * This prevents an attacker from burning through the Max subscription
+ * rate limit while Nick is asleep.
+ */
+const RATE_LIMIT_THRESHOLD = 0.5;
 let rateLimitLocked = false;
 let lastUtilization = 0;
+
+// ============================================================
+// WebSocket connection to the relay
+// ============================================================
 
 function connect() {
   const wsUrl = RELAY_URL!.replace(/^http/, "ws") + "/ws/worker";
@@ -39,7 +70,7 @@ function connect() {
     const auth: WorkerAuth = { type: "auth", token: AUTH_TOKEN! };
     ws.send(JSON.stringify(auth));
 
-    // Send available project directories
+    // Tell the relay what project directories are available on this machine
     const dirs = scanProjectDirs(WORKER_CWD);
     const dirMsg: WorkerDirectories = { type: "directories", dirs };
     ws.send(JSON.stringify(dirMsg));
@@ -56,6 +87,7 @@ function connect() {
 
     if (msg.type !== "prompt") return;
 
+    // Refuse all prompts if rate limit protection tripped
     if (rateLimitLocked) {
       const err: WorkerError = {
         type: "error",
@@ -80,6 +112,10 @@ function connect() {
   });
 }
 
+// ============================================================
+// Prompt handling — the core of the worker
+// ============================================================
+
 async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
   const { conversationId, message, cwd, role, sandbox, sessionId } = msg;
   const toolUseRecords: ToolUseRecord[] = [];
@@ -88,13 +124,28 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
 
   const isAdmin = role === "admin";
 
-  // Ensure sandbox directory exists for chat users
+  // Create sandbox directory if it doesn't exist yet
   if (!isAdmin && sandbox) {
-    const sandboxFs = require("fs");
-    sandboxFs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(sandbox, { recursive: true });
   }
 
   try {
+    /**
+     * SDK options differ by role:
+     *
+     * Admin (Nick):
+     *   - Full tool access, bypass all permissions
+     *   - Uses the selected project directory as cwd
+     *   - Loads CLAUDE.md and user settings (the full harness)
+     *
+     * Chat (Mom/Brother):
+     *   - Only Read/Edit/Write (sandboxed) + WebSearch/WebFetch
+     *   - All system tools (Bash, Glob, Grep) explicitly blocked
+     *   - cwd set to their sandbox directory
+     *   - canUseTool callback enforces filesystem sandbox
+     *   - Loads project settings from sandbox (their personal CLAUDE.md)
+     *   - Limited to 5 turns (enough for search → fetch → respond)
+     */
     const options: Record<string, unknown> = isAdmin ? {
       cwd: cwd || WORKER_CWD,
       allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
@@ -111,12 +162,16 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
       settingSources: sandbox ? ["project"] : [],
       includePartialMessages: true,
       maxTurns: 5,
+      /**
+       * Filesystem sandbox enforcement.
+       * Even though cwd is set to the sandbox, Claude can use absolute paths
+       * to escape. This callback rejects any file operation targeting a path
+       * outside the sandbox directory.
+       */
       canUseTool: sandbox ? (toolName: string, input: any) => {
-        // Only allow file ops within the sandbox
         const fileTools = ["Read", "Edit", "Write"];
         if (fileTools.includes(toolName)) {
           const filePath = input?.file_path || input?.path || "";
-          // Normalize: if absolute, use as-is; if relative, resolve from sandbox
           const resolved = path.isAbsolute(filePath)
             ? path.normalize(filePath)
             : path.normalize(path.join(sandbox, filePath));
@@ -132,19 +187,21 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
       } : undefined,
     };
 
+    // Resume a previous conversation if we have a session ID
     if (sessionId) {
       options.resume = sessionId;
     }
 
     const session = query({ prompt: message, options });
 
+    // Process the SDK's async event stream
     for await (const event of session) {
       if (ws.readyState !== WebSocket.OPEN) {
         console.log("Relay disconnected during prompt execution");
         return;
       }
 
-      // Check for rate limit events
+      // Monitor rate limit utilization — lock if threshold exceeded
       if (event.type === "rate_limit_event") {
         const rle = event as any;
         if (rle.utilization !== undefined) {
@@ -157,11 +214,11 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
         }
       }
 
+      // Stream events — map SDK events to our simplified protocol and forward
       if (event.type === "stream_event") {
         const sdkEvent = (event as any).event;
         const streamEvent = mapSdkEvent(sdkEvent, activeTools);
         if (streamEvent) {
-          // Accumulate text
           if (streamEvent.type === "text_delta") {
             fullText += streamEvent.text;
           }
@@ -174,9 +231,9 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
           ws.send(JSON.stringify(outbound));
         }
       } else if (event.type === "result") {
+        // Response complete — send the final result with full text and session ID
         const resultEvent = event as any;
 
-        // Collect tool use records from active tools
         for (const [, tool] of activeTools) {
           toolUseRecords.push({
             toolName: tool.name,
@@ -207,6 +264,13 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
   }
 }
 
+// ============================================================
+// SDK event mapping
+// The Claude Code SDK emits raw Anthropic API streaming events.
+// We translate them into our simplified StreamEvent protocol
+// that the frontend knows how to render.
+// ============================================================
+
 function mapSdkEvent(
   sdkEvent: any,
   activeTools: Map<string, { name: string; input: string }>
@@ -214,9 +278,11 @@ function mapSdkEvent(
   if (!sdkEvent || !sdkEvent.type) return null;
 
   if (sdkEvent.type === "content_block_delta") {
+    // Text chunk from Claude's response
     if (sdkEvent.delta?.type === "text_delta") {
       return { type: "text_delta", text: sdkEvent.delta.text };
     }
+    // Partial JSON for a tool call's input (streamed incrementally)
     if (sdkEvent.delta?.type === "input_json_delta") {
       const toolId = String(sdkEvent.index);
       const tool = activeTools.get(toolId);
@@ -231,6 +297,7 @@ function mapSdkEvent(
     }
   }
 
+  // Claude is starting a new tool call
   if (
     sdkEvent.type === "content_block_start" &&
     sdkEvent.content_block?.type === "tool_use"
@@ -247,7 +314,7 @@ function mapSdkEvent(
     };
   }
 
-  // Tool results come as assistant messages with tool_result content
+  // A content block (tool call) has finished
   if (sdkEvent.type === "content_block_stop") {
     const toolId = String(sdkEvent.index);
     const tool = activeTools.get(toolId);
@@ -263,6 +330,13 @@ function mapSdkEvent(
   return null;
 }
 
+// ============================================================
+// Project directory scanner
+// Scans the worker's base directory for project folders.
+// Used to populate the admin's project picker in the UI.
+// Projects with CLAUDE.md are sorted first (they're "real" projects).
+// ============================================================
+
 function scanProjectDirs(baseDir: string) {
   const dirs: { path: string; name: string; hasClaudeMd: boolean }[] = [];
   try {
@@ -277,7 +351,6 @@ function scanProjectDirs(baseDir: string) {
   } catch (err) {
     console.error("Error scanning project dirs:", err);
   }
-  // Sort: projects with CLAUDE.md first, then alphabetical
   dirs.sort((a, b) => {
     if (a.hasClaudeMd !== b.hasClaudeMd) return a.hasClaudeMd ? -1 : 1;
     return a.name.localeCompare(b.name);
@@ -285,5 +358,8 @@ function scanProjectDirs(baseDir: string) {
   return dirs;
 }
 
-// --- Start ---
+// ============================================================
+// Start
+// ============================================================
+
 connect();

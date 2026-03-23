@@ -1,3 +1,18 @@
+/**
+ * Relay Server — runs on the Pixel 3a (always-on box).
+ *
+ * This is the central hub. It does NOT run Claude or call any AI APIs.
+ * It simply:
+ *   1. Serves the mobile chat UI (static files)
+ *   2. Authenticates devices via token → cookie session
+ *   3. Accepts a WebSocket from the worker (PC) for Claude Code execution
+ *   4. Accepts WebSocket connections from clients (phones/browsers)
+ *   5. Relays messages between clients and the worker
+ *   6. Stores conversation history in SQLite
+ *
+ * Think of it as a mailbox with tenant isolation.
+ */
+
 import "dotenv/config";
 import express from "express";
 import cookieParser from "cookie-parser";
@@ -19,15 +34,21 @@ import type {
 } from "./types";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const WORKER_TOKEN = process.env.AUTH_TOKEN; // Worker still uses env token for now
 
-// Session tokens: map of session token -> { deviceId, role, expiry }
+// ============================================================
+// Session management
+// Sessions are in-memory (lost on relay restart — users just re-login).
+// Each session maps a random token (stored as an HTTP-only cookie)
+// to the device that authenticated.
+// ============================================================
+
 interface SessionData {
   deviceId: string;
   role: "admin" | "chat";
   sandbox?: string;
   expiry: number;
 }
+
 const activeSessions = new Map<string, SessionData>();
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -48,20 +69,30 @@ function getSession(token: string | undefined): SessionData | null {
   return session;
 }
 
-// --- State ---
+// ============================================================
+// Runtime state
+// ============================================================
 
+/** The single active worker connection (only one worker at a time) */
 let workerSocket: WebSocket | null = null;
+/** Project directories reported by the worker on connect (shown in admin's project picker) */
 let workerDirectories: { path: string; name: string; hasClaudeMd: boolean }[] = [];
+/** All connected client WebSockets (phones/browsers) */
 const clientSockets = new Set<WebSocket>();
 
-// --- Express app ---
+// ============================================================
+// Express app + auth
+// ============================================================
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-// Login endpoint
+/**
+ * Login: client POSTs a token, we look it up in the devices table.
+ * If valid, set an HTTP-only session cookie (never visible to JS).
+ */
 app.post("/api/login", (req, res) => {
   const { token } = req.body;
   const db = getDb();
@@ -72,7 +103,6 @@ app.post("/api/login", (req, res) => {
     return;
   }
 
-  // Update last seen
   db.update(devices).set({ lastSeen: new Date().toISOString() }).where(eq(devices.id, device.id)).run();
 
   const sessionToken = createSession(device.id, device.role as "admin" | "chat", device.sandbox || undefined);
@@ -92,7 +122,7 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-// Auth middleware for REST endpoints
+/** Middleware: rejects unauthenticated requests, attaches session to req */
 function requireAuth(
   req: express.Request,
   res: express.Response,
@@ -107,10 +137,10 @@ function requireAuth(
   res.status(401).json({ error: "unauthorized" });
 }
 
-// Serve login page for unauthenticated users, app for authenticated
+/** Root route: authenticated users get the chat app, others get the login page */
 app.get("/", (req, res, next) => {
   if (getSession(req.cookies?.rc_session)) {
-    next(); // fall through to static file serving
+    next();
   } else {
     res.sendFile(path.join(__dirname, "..", "public", "login.html"));
   }
@@ -118,12 +148,15 @@ app.get("/", (req, res, next) => {
 
 app.use(express.static(path.join(__dirname, "..", "public")));
 
-// --- REST endpoints ---
+// ============================================================
+// REST API
+// ============================================================
 
 app.get("/api/status", requireAuth, (_req, res) => {
   res.json({ workerOnline: workerSocket !== null });
 });
 
+/** List conversations — scoped to the authenticated device (tenant isolation) */
 app.get("/api/conversations", requireAuth, (req, res) => {
   const db = getDb();
   const session = (req as any).session as SessionData;
@@ -135,6 +168,7 @@ app.get("/api/conversations", requireAuth, (req, res) => {
   res.json(rows);
 });
 
+/** Get messages for a specific conversation */
 app.get("/api/conversations/:id/messages", requireAuth, (req, res) => {
   const db = getDb();
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
@@ -142,15 +176,20 @@ app.get("/api/conversations/:id/messages", requireAuth, (req, res) => {
   res.json(rows);
 });
 
-// --- HTTP server ---
+// ============================================================
+// HTTP server + WebSocket upgrade routing
+// ============================================================
 
 const server = http.createServer(app);
-
-// --- WebSocket servers ---
 
 const workerWss = new WebSocketServer({ noServer: true });
 const clientWss = new WebSocketServer({ noServer: true });
 
+/**
+ * Route WebSocket upgrades to the appropriate handler.
+ * /ws/worker — the PC connects here
+ * /ws/client — phones/browsers connect here (authenticated via session cookie)
+ */
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
@@ -159,7 +198,6 @@ server.on("upgrade", (req, socket, head) => {
       workerWss.emit("connection", ws, req);
     });
   } else if (url.pathname === "/ws/client") {
-    // Parse cookies from the upgrade request
     const cookieHeader = req.headers.cookie || "";
     const sessionMatch = cookieHeader.match(/rc_session=([^;]+)/);
     const sessionToken = sessionMatch ? sessionMatch[1] : undefined;
@@ -178,11 +216,16 @@ server.on("upgrade", (req, socket, head) => {
   }
 });
 
-// --- Worker connection handling ---
+// ============================================================
+// Worker WebSocket handler
+// The worker (PC) connects here, authenticates, then receives
+// prompts and streams back responses.
+// ============================================================
 
 workerWss.on("connection", (ws) => {
   let authenticated = false;
 
+  // Worker must authenticate within 5 seconds or get kicked
   const authTimeout = setTimeout(() => {
     if (!authenticated) {
       ws.close(4001, "auth timeout");
@@ -197,7 +240,7 @@ workerWss.on("connection", (ws) => {
       return;
     }
 
-    // First message must be auth
+    // First message must be auth — looked up against devices table (type=worker)
     if (!authenticated) {
       const workerDevice = (() => {
         if (msg.type !== "auth") return null;
@@ -208,7 +251,7 @@ workerWss.on("connection", (ws) => {
         authenticated = true;
         clearTimeout(authTimeout);
 
-        // Only one worker at a time
+        // Only one worker at a time — new connections replace old ones
         if (workerSocket) {
           workerSocket.close(4002, "replaced by new worker");
         }
@@ -222,7 +265,7 @@ workerWss.on("connection", (ws) => {
       return;
     }
 
-    // Directory list from worker
+    // Worker sends its list of project directories right after auth
     if (msg.type === "directories") {
       workerDirectories = (msg as any).dirs;
       console.log(`Worker reported ${workerDirectories.length} project directories`);
@@ -230,11 +273,11 @@ workerWss.on("connection", (ws) => {
       return;
     }
 
-    // Authenticated worker messages
+    // Stream events, results, and errors from Claude — store and forward
     if (msg.type === "stream_event" || msg.type === "result" || msg.type === "error") {
       const db = getDb();
 
-      // Store completed responses
+      // On completion, persist the assistant's response to the DB
       if (msg.type === "result") {
         db.insert(messages).values({
           id: uuid(),
@@ -244,13 +287,14 @@ workerWss.on("connection", (ws) => {
           toolUse: msg.toolUse ? JSON.stringify(msg.toolUse) : null,
         }).run();
 
+        // Store the SDK session ID so this conversation can be resumed later
         db.update(conversations)
           .set({ sessionId: msg.sessionId, updatedAt: new Date().toISOString() })
           .where(eq(conversations.id, msg.conversationId))
           .run();
       }
 
-      // Forward to the owning device's clients only
+      // Forward to the owning device's clients only (tenant isolation)
       const convId = (msg as any).conversationId;
       const conv = convId
         ? db.select({ deviceId: conversations.deviceId })
@@ -276,12 +320,16 @@ workerWss.on("connection", (ws) => {
   });
 });
 
-// --- Client connection handling ---
+// ============================================================
+// Client WebSocket handler
+// Phones/browsers connect here. They send chat messages,
+// and receive streaming responses + status updates.
+// ============================================================
 
 clientWss.on("connection", (ws) => {
   clientSockets.add(ws);
 
-  // Send current status on connect
+  // Immediately tell the client whether the worker is online
   const statusMsg: ClientStatus = {
     type: "status",
     workerOnline: workerSocket !== null,
@@ -317,8 +365,8 @@ clientWss.on("connection", (ws) => {
       let sessionId: string | undefined;
       let cwd: string = msg.cwd || "";
 
-      // New conversation
       if (!conversationId) {
+        // New conversation — create it in the DB, tied to this device
         conversationId = uuid();
         db.insert(conversations).values({
           id: conversationId,
@@ -327,7 +375,7 @@ clientWss.on("connection", (ws) => {
           cwd: cwd || null,
         }).run();
       } else {
-        // Resuming — look up session ID and cwd
+        // Resuming — pull the SDK session ID and cwd from the DB
         const conv = db.select({
           sessionId: conversations.sessionId,
           cwd: conversations.cwd,
@@ -336,7 +384,7 @@ clientWss.on("connection", (ws) => {
         cwd = conv?.cwd || cwd;
       }
 
-      // Store user message
+      // Store the user's message
       db.insert(messages).values({
         id: uuid(),
         conversationId,
@@ -349,7 +397,7 @@ clientWss.on("connection", (ws) => {
         .where(eq(conversations.id, conversationId))
         .run();
 
-      // Forward to worker
+      // Build the prompt and forward to the worker
       const prompt: WorkerPrompt = {
         type: "prompt",
         conversationId,
@@ -361,7 +409,7 @@ clientWss.on("connection", (ws) => {
       };
       workerSocket.send(JSON.stringify(prompt));
 
-      // Tell client which conversation this is (for new conversations)
+      // Tell the client which conversation ID was assigned (for new conversations)
       if (!msg.conversationId) {
         ws.send(
           JSON.stringify({
@@ -382,18 +430,24 @@ clientWss.on("connection", (ws) => {
   });
 });
 
-// --- Helpers ---
+// ============================================================
+// Helpers
+// ============================================================
 
+/**
+ * Send a message to connected clients.
+ * If deviceId is provided, only sends to clients authenticated as that device
+ * (used for conversation events — tenant isolation).
+ * If deviceId is omitted, broadcasts to all clients (used for status updates).
+ */
 function broadcastToClients(msg: object, deviceId?: string) {
   const payload = JSON.stringify(msg);
   for (const client of clientSockets) {
     if (client.readyState !== WebSocket.OPEN) continue;
-    // Status messages go to everyone
     if (!deviceId) {
       client.send(payload);
       continue;
     }
-    // Conversation events only go to the owning device
     const clientSession = (client as any).session as SessionData | undefined;
     if (clientSession && clientSession.deviceId === deviceId) {
       client.send(payload);
@@ -401,9 +455,11 @@ function broadcastToClients(msg: object, deviceId?: string) {
   }
 }
 
-// --- Start ---
+// ============================================================
+// Start
+// ============================================================
 
 server.listen(PORT, "0.0.0.0", () => {
-  getDb(); // init db on startup
+  getDb(); // init db + run migrations on startup
   console.log(`Relay server listening on 0.0.0.0:${PORT}`);
 });

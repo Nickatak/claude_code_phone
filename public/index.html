@@ -205,9 +205,6 @@
       border-bottom-left-radius: 4px;
     }
 
-    .message .text-content:empty {
-      display: none;
-    }
 
     .message.tool-call {
       align-self: flex-start;
@@ -533,9 +530,8 @@
     function ensureAssistantBubble() {
       if (!currentAssistantEl) {
         currentAssistantEl = document.createElement("div");
-        currentAssistantEl.className = "message assistant";
+        currentAssistantEl.className = "message assistant streaming-cursor";
         currentAssistantEl.style.display = "none";
-        currentAssistantEl.innerHTML = '<span class="text-content streaming-cursor"></span>';
         messagesEl.appendChild(currentAssistantEl);
       }
       return currentAssistantEl;
@@ -544,13 +540,9 @@
     // Close current text bubble so the next text starts fresh
     function finalizeCurrentBubble() {
       if (currentAssistantEl) {
-        const textEl = currentAssistantEl.querySelector(".text-content");
-        if (textEl) {
-          textEl.classList.remove("streaming-cursor");
-          // Remove empty bubbles
-          if (!textEl.textContent.trim()) {
-            currentAssistantEl.remove();
-          }
+        currentAssistantEl.classList.remove("streaming-cursor");
+        if (!currentAssistantEl.textContent.trim()) {
+          currentAssistantEl.remove();
         }
         currentAssistantEl = null;
       }
@@ -581,8 +573,7 @@
           if (bubble.style.display === "none") {
             bubble.style.display = "";
           }
-          const textEl = bubble.querySelector(".text-content");
-          textEl.textContent += event.text;
+          bubble.textContent += event.text;
           scrollToBottom();
           break;
         }
@@ -628,9 +619,8 @@
       // If we have fullText but the bubble is empty or hidden, render it
       if (msg.fullText) {
         const bubble = ensureAssistantBubble();
-        const textEl = bubble.querySelector(".text-content");
-        if (!textEl.textContent.trim()) {
-          textEl.textContent = msg.fullText;
+        if (!bubble.textContent.trim()) {
+          bubble.textContent = msg.fullText;
         }
         bubble.style.display = "";
       }

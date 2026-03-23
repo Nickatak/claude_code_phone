@@ -656,6 +656,8 @@
             const content = toolDiv.querySelector(".tool-content");
             content.textContent = parseToolInput(content.textContent);
           }
+          // Show spinner again — more processing may follow
+          showSpinner();
           // Next text will start a new bubble
           scrollToBottom();
           break;

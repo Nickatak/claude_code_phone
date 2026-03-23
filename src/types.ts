@@ -77,10 +77,19 @@ export interface WorkerDirectories {
   dirs: { path: string; name: string; hasClaudeMd: boolean }[];
 }
 
+/** Worker sends this periodically so the relay knows it's alive and responsive */
+export interface WorkerHeartbeat {
+  type: "heartbeat";
+  /** Number of prompts currently queued (waiting + active) */
+  queueDepth: number;
+  /** Conversation ID of the currently executing prompt, if any */
+  activeConversationId?: string;
+}
+
 /** Messages the worker receives from the relay */
 export type WorkerInbound = WorkerPrompt;
 /** Messages the worker sends to the relay */
-export type WorkerOutbound = WorkerAuth | WorkerDirectories | WorkerEvent | WorkerResult | WorkerError;
+export type WorkerOutbound = WorkerAuth | WorkerDirectories | WorkerEvent | WorkerResult | WorkerError | WorkerHeartbeat;
 
 // ============================================================
 // Stream events

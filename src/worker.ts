@@ -13,8 +13,14 @@
  *   - admin: Full Claude Code — all tools, bypass permissions, project cwd
  *   - chat: Sandboxed — only Read/Edit/Write within their sandbox dir + WebSearch/WebFetch
  *
- * Auto-reconnects if the relay goes down. Locks itself if rate limit
- * utilization exceeds 50% (protection against unauthorized usage while sleeping).
+ * Reliability features:
+ *   - Prompt queue: prompts are processed sequentially, not dropped
+ *   - 10-minute timeout: prevents indefinite hangs on stuck SDK calls
+ *   - Heartbeat: sends periodic pings so the relay can detect unresponsiveness
+ *   - Rate limit kill switch: locks if utilization exceeds 50%
+ *
+ * Auto-reconnects if the relay goes down. Designed to run under a watchdog
+ * supervisor (worker-start.sh) that restarts on crash.
  */
 
 import "dotenv/config";
@@ -25,6 +31,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
   WorkerAuth,
   WorkerDirectories,
+  WorkerHeartbeat,
   WorkerPrompt,
   WorkerEvent,
   WorkerResult,
@@ -44,6 +51,10 @@ if (!RELAY_URL || !AUTH_TOKEN) {
 }
 
 const RECONNECT_DELAY_MS = 5000;
+/** Maximum time a single prompt can run before being killed */
+const PROMPT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+/** How often the worker sends a heartbeat to the relay */
+const HEARTBEAT_INTERVAL_MS = 30 * 1000; // 30 seconds
 
 /**
  * Rate limit kill switch.
@@ -57,8 +68,40 @@ let rateLimitLocked = false;
 let lastUtilization = 0;
 
 // ============================================================
+// Prompt queue
+// Prompts are processed one at a time. New prompts are queued
+// and executed in order. This keeps the message handler non-blocking
+// and allows the worker to handle heartbeats/status while busy.
+// ============================================================
+
+const promptQueue: WorkerPrompt[] = [];
+let activePrompt: WorkerPrompt | null = null;
+
+function enqueuePrompt(ws: WebSocket, msg: WorkerPrompt) {
+  promptQueue.push(msg);
+  console.log(`Queued prompt for ${msg.conversationId} (queue depth: ${promptQueue.length})`);
+  processQueue(ws);
+}
+
+function processQueue(ws: WebSocket) {
+  if (activePrompt) return; // already processing
+  const next = promptQueue.shift();
+  if (!next) return;
+
+  activePrompt = next;
+  console.log(`Processing prompt for ${next.conversationId} (${promptQueue.length} remaining in queue)`);
+
+  handlePrompt(ws, next).finally(() => {
+    activePrompt = null;
+    processQueue(ws);
+  });
+}
+
+// ============================================================
 // WebSocket connection to the relay
 // ============================================================
+
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
 function connect() {
   const wsUrl = RELAY_URL!.replace(/^http/, "ws") + "/ws/worker";
@@ -75,9 +118,22 @@ function connect() {
     const dirMsg: WorkerDirectories = { type: "directories", dirs };
     ws.send(JSON.stringify(dirMsg));
     console.log(`Worker registered and ready (${dirs.length} project dirs)`);
+
+    // Start heartbeat
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
+    heartbeatInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        const hb: WorkerHeartbeat = {
+          type: "heartbeat",
+          queueDepth: promptQueue.length + (activePrompt ? 1 : 0),
+          activeConversationId: activePrompt?.conversationId,
+        };
+        ws.send(JSON.stringify(hb));
+      }
+    }, HEARTBEAT_INTERVAL_MS);
   });
 
-  ws.on("message", async (data) => {
+  ws.on("message", (data) => {
     let msg: WorkerPrompt;
     try {
       msg = JSON.parse(data.toString());
@@ -99,10 +155,17 @@ function connect() {
     }
 
     console.log(`Received prompt for conversation ${msg.conversationId}`);
-    await handlePrompt(ws, msg);
+    enqueuePrompt(ws, msg);
   });
 
   ws.on("close", (code, reason) => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+    // Clear the queue — prompts for a dead connection are stale
+    promptQueue.length = 0;
+    activePrompt = null;
     console.log(`Disconnected from relay (${code}: ${reason}). Reconnecting in ${RECONNECT_DELAY_MS / 1000}s...`);
     setTimeout(connect, RECONNECT_DELAY_MS);
   });
@@ -116,6 +179,17 @@ function connect() {
 // Prompt handling — the core of the worker
 // ============================================================
 
+/**
+ * Race a promise against a timeout. Rejects with a TimeoutError if
+ * the timeout fires first.
+ */
+class TimeoutError extends Error {
+  constructor(ms: number) {
+    super(`Prompt timed out after ${ms / 1000 / 60} minutes`);
+    this.name = "TimeoutError";
+  }
+}
+
 async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
   const { conversationId, message, cwd, role, sandbox, sessionId } = msg;
   const toolUseRecords: ToolUseRecord[] = [];
@@ -128,6 +202,14 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
   if (!isAdmin && sandbox) {
     fs.mkdirSync(sandbox, { recursive: true });
   }
+
+  // Timeout setup — kills the prompt if it runs too long
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new TimeoutError(PROMPT_TIMEOUT_MS));
+    }, PROMPT_TIMEOUT_MS);
+  });
 
   try {
     /**
@@ -194,8 +276,17 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
 
     const session = query({ prompt: message, options });
 
-    // Process the SDK's async event stream
-    for await (const event of session) {
+    // Process the SDK's async event stream, racing against the timeout
+    const iterator = session[Symbol.asyncIterator]();
+    while (true) {
+      const next = await Promise.race([
+        iterator.next(),
+        timeoutPromise,
+      ]);
+
+      if (next.done) break;
+      const event = next.value;
+
       if (ws.readyState !== WebSocket.OPEN) {
         console.log("Relay disconnected during prompt execution");
         return;
@@ -254,13 +345,22 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
       }
     }
   } catch (err) {
-    const error: WorkerError = {
-      type: "error",
-      conversationId,
-      message: err instanceof Error ? err.message : String(err),
-    };
-    ws.send(JSON.stringify(error));
-    console.error(`Error handling prompt for ${conversationId}:`, err);
+    const isTimeout = err instanceof TimeoutError;
+    const errorMessage = isTimeout
+      ? `${err.message}. The worker has moved on to the next queued prompt.`
+      : err instanceof Error ? err.message : String(err);
+
+    if (ws.readyState === WebSocket.OPEN) {
+      const error: WorkerError = {
+        type: "error",
+        conversationId,
+        message: errorMessage,
+      };
+      ws.send(JSON.stringify(error));
+    }
+    console.error(`${isTimeout ? "TIMEOUT" : "Error"} handling prompt for ${conversationId}:`, err);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

@@ -80,6 +80,12 @@ let workerDirectories: { path: string; name: string; hasClaudeMd: boolean }[] = 
 /** All connected client WebSockets (phones/browsers) */
 const clientSockets = new Set<WebSocket>();
 
+/** Heartbeat tracking — if the worker stops sending heartbeats, mark it unresponsive */
+let lastHeartbeat: number = 0;
+let workerResponsive: boolean = false;
+const HEARTBEAT_STALE_MS = 90 * 1000; // 90 seconds without heartbeat = unresponsive
+let heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null;
+
 // ============================================================
 // Express app + auth
 // ============================================================
@@ -153,7 +159,7 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 // ============================================================
 
 app.get("/api/status", requireAuth, (_req, res) => {
-  res.json({ workerOnline: workerSocket !== null });
+  res.json({ workerOnline: workerSocket !== null && workerResponsive });
 });
 
 /** List conversations — scoped to the authenticated device (tenant isolation) */
@@ -257,8 +263,26 @@ workerWss.on("connection", (ws) => {
         }
         workerSocket = ws;
         workerDirectories = [];
+        lastHeartbeat = Date.now();
+        workerResponsive = true;
         console.log("Worker connected");
         broadcastToClients({ type: "status", workerOnline: true });
+
+        // Start checking for stale heartbeats
+        if (heartbeatCheckInterval) clearInterval(heartbeatCheckInterval);
+        heartbeatCheckInterval = setInterval(() => {
+          if (!workerSocket) return;
+          const stale = Date.now() - lastHeartbeat > HEARTBEAT_STALE_MS;
+          if (stale && workerResponsive) {
+            workerResponsive = false;
+            console.log(`Worker heartbeat stale (last: ${Math.round((Date.now() - lastHeartbeat) / 1000)}s ago) — marking unresponsive`);
+            broadcastToClients({ type: "status", workerOnline: false });
+          } else if (!stale && !workerResponsive) {
+            workerResponsive = true;
+            console.log("Worker heartbeat resumed — marking responsive");
+            broadcastToClients({ type: "status", workerOnline: true, directories: workerDirectories });
+          }
+        }, 30_000);
       } else {
         ws.close(4003, "bad auth");
       }
@@ -270,6 +294,12 @@ workerWss.on("connection", (ws) => {
       workerDirectories = (msg as any).dirs;
       console.log(`Worker reported ${workerDirectories.length} project directories`);
       broadcastToClients({ type: "status", workerOnline: true, directories: workerDirectories });
+      return;
+    }
+
+    // Heartbeat — update timestamp (the interval check handles responsive/unresponsive transitions)
+    if (msg.type === "heartbeat") {
+      lastHeartbeat = Date.now();
       return;
     }
 
@@ -309,6 +339,11 @@ workerWss.on("connection", (ws) => {
   ws.on("close", () => {
     if (workerSocket === ws) {
       workerSocket = null;
+      workerResponsive = false;
+      if (heartbeatCheckInterval) {
+        clearInterval(heartbeatCheckInterval);
+        heartbeatCheckInterval = null;
+      }
       console.log("Worker disconnected");
       broadcastToClients({ type: "status", workerOnline: false });
     }

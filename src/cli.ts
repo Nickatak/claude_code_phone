@@ -50,10 +50,10 @@ async function listDevices() {
     return;
   }
 
-  console.log(`\n${"Name".padEnd(25)} ${"Type".padEnd(8)} ${"Role".padEnd(6)} ${"Last Seen".padEnd(20)} Token`);
+  console.log(`\n${"Name".padEnd(20)} ${"Type".padEnd(8)} ${"Role".padEnd(6)} ${"Token".padEnd(15)} ${"Sandbox"}`);
   console.log("-".repeat(90));
   for (const d of rows) {
-    console.log(`${(d.name || "").padEnd(25)} ${d.type.padEnd(8)} ${d.role.padEnd(6)} ${(d.lastSeen || "never").padEnd(20)} ${d.token}`);
+    console.log(`${(d.name || "").padEnd(20)} ${d.type.padEnd(8)} ${d.role.padEnd(6)} ${d.token.padEnd(15)} ${d.sandbox || "-"}`);
   }
 }
 

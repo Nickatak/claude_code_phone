@@ -1,4 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#1a1a1a"/>
-  <text x="256" y="320" font-family="system-ui, sans-serif" font-size="280" font-weight="700" fill="#d4a574" text-anchor="middle">C</text>
+  <rect width="512" height="512" rx="96" fill="#da7756"/>
+  <g transform="translate(256, 256)">
+    <!-- Organic starburst rays - varying lengths and slight angle offsets -->
+    <line x1="0" y1="-20" x2="-8" y2="-135" stroke="#f5ede4" stroke-width="22" stroke-linecap="round"/>
+    <line x1="14" y1="-14" x2="68" y2="-120" stroke="#f5ede4" stroke-width="20" stroke-linecap="round"/>
+    <line x1="20" y1="0" x2="130" y2="-15" stroke="#f5ede4" stroke-width="21" stroke-linecap="round"/>
+    <line x1="14" y1="14" x2="95" y2="80" stroke="#f5ede4" stroke-width="19" stroke-linecap="round"/>
+    <line x1="0" y1="20" x2="15" y2="140" stroke="#f5ede4" stroke-width="22" stroke-linecap="round"/>
+    <line x1="-14" y1="14" x2="-75" y2="105" stroke="#f5ede4" stroke-width="20" stroke-linecap="round"/>
+    <line x1="-20" y1="0" x2="-125" y2="20" stroke="#f5ede4" stroke-width="21" stroke-linecap="round"/>
+    <line x1="-14" y1="-14" x2="-90" y2="-95" stroke="#f5ede4" stroke-width="19" stroke-linecap="round"/>
+    <!-- Extra shorter rays for density -->
+    <line x1="10" y1="-18" x2="35" y2="-110" stroke="#f5ede4" stroke-width="17" stroke-linecap="round"/>
+    <line x1="18" y1="10" x2="110" y2="40" stroke="#f5ede4" stroke-width="17" stroke-linecap="round"/>
+    <line x1="-10" y1="18" x2="-40" y2="120" stroke="#f5ede4" stroke-width="17" stroke-linecap="round"/>
+    <line x1="-18" y1="-10" x2="-115" y2="-45" stroke="#f5ede4" stroke-width="17" stroke-linecap="round"/>
+  </g>
 </svg>

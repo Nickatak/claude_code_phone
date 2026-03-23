@@ -600,6 +600,7 @@
         const parsed = JSON.parse(raw);
         // Show the most useful field depending on tool type
         if (parsed.command) return parsed.command;
+        if (parsed.url) return parsed.url;
         if (parsed.file_path) return parsed.file_path;
         if (parsed.pattern) return parsed.pattern;
         if (parsed.query) return parsed.query;

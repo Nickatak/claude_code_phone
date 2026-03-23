@@ -231,9 +231,10 @@ workerWss.on("connection", (ws) => {
 
     // Authenticated worker messages
     if (msg.type === "stream_event" || msg.type === "result" || msg.type === "error") {
+      const db = getDb();
+
       // Store completed responses
       if (msg.type === "result") {
-        const db = getDb();
         db.insert(messages).values({
           id: uuid(),
           conversationId: msg.conversationId,
@@ -248,8 +249,15 @@ workerWss.on("connection", (ws) => {
           .run();
       }
 
-      // Forward to all connected clients
-      broadcastToClients(msg);
+      // Forward to the owning device's clients only
+      const convId = (msg as any).conversationId;
+      const conv = convId
+        ? db.select({ deviceId: conversations.deviceId })
+            .from(conversations)
+            .where(eq(conversations.id, convId))
+            .get()
+        : undefined;
+      broadcastToClients(msg, conv?.deviceId || undefined);
     }
   });
 
@@ -374,10 +382,18 @@ clientWss.on("connection", (ws) => {
 
 // --- Helpers ---
 
-function broadcastToClients(msg: object) {
+function broadcastToClients(msg: object, deviceId?: string) {
   const payload = JSON.stringify(msg);
   for (const client of clientSockets) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    // Status messages go to everyone
+    if (!deviceId) {
+      client.send(payload);
+      continue;
+    }
+    // Conversation events only go to the owning device
+    const clientSession = (client as any).session as SessionData | undefined;
+    if (clientSession && clientSession.deviceId === deviceId) {
       client.send(payload);
     }
   }

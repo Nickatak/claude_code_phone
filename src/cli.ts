@@ -78,7 +78,18 @@ async function main() {
 
   switch (command) {
     case "add":
-      await addDevice();
+      // Support non-interactive: cli add <name> <type> <role> [token]
+      if (process.argv[3]) {
+        const name = process.argv[3];
+        const type = (process.argv[4] || "client") as "worker" | "client";
+        const role = (process.argv[5] || "chat") as "admin" | "chat";
+        const token = process.argv[6] || crypto.randomBytes(16).toString("hex");
+        const db = getDb();
+        db.insert(devices).values({ id: uuid(), name, type, role, token }).run();
+        console.log(`Device created: ${name} (${type}, ${role}) token=${token}`);
+      } else {
+        await addDevice();
+      }
       break;
     case "list":
       await listDevices();
@@ -88,6 +99,7 @@ async function main() {
       break;
     default:
       console.log("Usage: cli <add|list|remove>");
+      console.log("       cli add <name> <type> <role> [token]");
   }
 
   rl.close();

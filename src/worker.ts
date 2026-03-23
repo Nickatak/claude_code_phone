@@ -81,19 +81,24 @@ function connect() {
 }
 
 async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
-  const { conversationId, message, cwd, sessionId } = msg;
+  const { conversationId, message, cwd, role, sessionId } = msg;
   const toolUseRecords: ToolUseRecord[] = [];
   const activeTools: Map<string, { name: string; input: string }> = new Map();
   let fullText = "";
 
+  const isAdmin = role === "admin";
+
   try {
     const options: Record<string, unknown> = {
-      cwd: cwd || WORKER_CWD,
-      allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
-      permissionMode: "bypassPermissions",
-      systemPrompt: { type: "preset", preset: "claude_code" },
-      settingSources: ["project", "user"],
+      cwd: isAdmin ? (cwd || WORKER_CWD) : undefined,
+      allowedTools: isAdmin ? ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"] : [],
+      permissionMode: isAdmin ? "bypassPermissions" : "plan",
+      systemPrompt: isAdmin
+        ? { type: "preset", preset: "claude_code" }
+        : "You are a helpful assistant. You are in chat-only mode — no tools or file access are available.",
+      settingSources: isAdmin ? ["project", "user"] : [],
       includePartialMessages: true,
+      maxTurns: isAdmin ? undefined : 1,
     };
 
     if (sessionId) {

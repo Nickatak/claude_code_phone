@@ -12,6 +12,7 @@ export interface WorkerPrompt {
   conversationId: string;
   message: string;
   cwd: string;
+  role: "admin" | "chat";
   sessionId?: string; // set when resuming a conversation
 }
 

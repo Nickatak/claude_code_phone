@@ -8,7 +8,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { v4 as uuid } from "uuid";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "./db";
-import { conversations, messages } from "./schema";
+import { conversations, messages, devices } from "./schema";
 import type {
   WorkerAuth,
   WorkerOutbound,
@@ -19,33 +19,32 @@ import type {
 } from "./types";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
-const AUTH_TOKEN = process.env.AUTH_TOKEN;
-const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+const WORKER_TOKEN = process.env.AUTH_TOKEN; // Worker still uses env token for now
 
-if (!AUTH_TOKEN) {
-  console.error("AUTH_TOKEN environment variable is required");
-  process.exit(1);
+// Session tokens: map of session token -> { deviceId, role, expiry }
+interface SessionData {
+  deviceId: string;
+  role: "admin" | "chat";
+  expiry: number;
 }
-
-// Session tokens: map of session token -> expiry timestamp
-const activeSessions = new Map<string, number>();
+const activeSessions = new Map<string, SessionData>();
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-function createSession(): string {
+function createSession(deviceId: string, role: "admin" | "chat"): string {
   const sessionToken = crypto.randomBytes(32).toString("hex");
-  activeSessions.set(sessionToken, Date.now() + SESSION_MAX_AGE_MS);
+  activeSessions.set(sessionToken, { deviceId, role, expiry: Date.now() + SESSION_MAX_AGE_MS });
   return sessionToken;
 }
 
-function isValidSession(token: string | undefined): boolean {
-  if (!token) return false;
-  const expiry = activeSessions.get(token);
-  if (!expiry) return false;
-  if (Date.now() > expiry) {
+function getSession(token: string | undefined): SessionData | null {
+  if (!token) return null;
+  const session = activeSessions.get(token);
+  if (!session) return null;
+  if (Date.now() > session.expiry) {
     activeSessions.delete(token);
-    return false;
+    return null;
   }
-  return true;
+  return session;
 }
 
 // --- State ---
@@ -64,18 +63,25 @@ app.use(cookieParser());
 // Login endpoint
 app.post("/api/login", (req, res) => {
   const { token } = req.body;
-  if (token !== AUTH_TOKEN) {
+  const db = getDb();
+  const device = db.select().from(devices).where(eq(devices.token, token)).get();
+
+  if (!device || device.type !== "client") {
     res.status(401).json({ error: "invalid token" });
     return;
   }
-  const sessionToken = createSession();
+
+  // Update last seen
+  db.update(devices).set({ lastSeen: new Date().toISOString() }).where(eq(devices.id, device.id)).run();
+
+  const sessionToken = createSession(device.id, device.role as "admin" | "chat");
   res.cookie("rc_session", sessionToken, {
     httpOnly: true,
     sameSite: "strict",
     maxAge: SESSION_MAX_AGE_MS,
     path: "/",
   });
-  res.json({ ok: true });
+  res.json({ ok: true, role: device.role });
 });
 
 app.post("/api/logout", (req, res) => {
@@ -91,7 +97,9 @@ function requireAuth(
   res: express.Response,
   next: express.NextFunction
 ) {
-  if (isValidSession(req.cookies?.rc_session)) {
+  const session = getSession(req.cookies?.rc_session);
+  if (session) {
+    (req as any).session = session;
     next();
     return;
   }
@@ -100,7 +108,7 @@ function requireAuth(
 
 // Serve login page for unauthenticated users, app for authenticated
 app.get("/", (req, res, next) => {
-  if (isValidSession(req.cookies?.rc_session)) {
+  if (getSession(req.cookies?.rc_session)) {
     next(); // fall through to static file serving
   } else {
     res.sendFile(path.join(__dirname, "..", "public", "login.html"));
@@ -115,9 +123,14 @@ app.get("/api/status", requireAuth, (_req, res) => {
   res.json({ workerOnline: workerSocket !== null });
 });
 
-app.get("/api/conversations", requireAuth, (_req, res) => {
+app.get("/api/conversations", requireAuth, (req, res) => {
   const db = getDb();
-  const rows = db.select().from(conversations).orderBy(desc(conversations.updatedAt)).limit(50).all();
+  const session = (req as any).session as SessionData;
+  const rows = db.select().from(conversations)
+    .where(eq(conversations.deviceId, session.deviceId))
+    .orderBy(desc(conversations.updatedAt))
+    .limit(50)
+    .all();
   res.json(rows);
 });
 
@@ -149,12 +162,14 @@ server.on("upgrade", (req, socket, head) => {
     const cookieHeader = req.headers.cookie || "";
     const sessionMatch = cookieHeader.match(/rc_session=([^;]+)/);
     const sessionToken = sessionMatch ? sessionMatch[1] : undefined;
-    if (!isValidSession(sessionToken)) {
+    const clientSession = getSession(sessionToken);
+    if (!clientSession) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;
     }
     clientWss.handleUpgrade(req, socket, head, (ws) => {
+      (ws as any).session = clientSession;
       clientWss.emit("connection", ws, req);
     });
   } else {
@@ -183,7 +198,12 @@ workerWss.on("connection", (ws) => {
 
     // First message must be auth
     if (!authenticated) {
-      if (msg.type === "auth" && (msg as WorkerAuth).token === AUTH_TOKEN) {
+      const workerDevice = (() => {
+        if (msg.type !== "auth") return null;
+        const db = getDb();
+        return db.select().from(devices).where(eq(devices.token, (msg as WorkerAuth).token)).get();
+      })();
+      if (workerDevice && workerDevice.type === "worker") {
         authenticated = true;
         clearTimeout(authTimeout);
 
@@ -283,6 +303,7 @@ clientWss.on("connection", (ws) => {
       }
 
       const db = getDb();
+      const clientSession = (ws as any).session as SessionData;
       let conversationId = msg.conversationId;
       let sessionId: string | undefined;
       let cwd: string = msg.cwd || "";
@@ -292,6 +313,7 @@ clientWss.on("connection", (ws) => {
         conversationId = uuid();
         db.insert(conversations).values({
           id: conversationId,
+          deviceId: clientSession.deviceId,
           title: msg.message.slice(0, 100),
           cwd: cwd || null,
         }).run();
@@ -324,6 +346,7 @@ clientWss.on("connection", (ws) => {
         conversationId,
         message: msg.message,
         cwd,
+        role: clientSession.role,
         sessionId,
       };
       workerSocket.send(JSON.stringify(prompt));

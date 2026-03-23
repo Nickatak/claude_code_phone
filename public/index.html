@@ -234,6 +234,28 @@
       overflow-y: auto;
     }
 
+    .tool-call.executing {
+      border-color: var(--accent-dim);
+      animation: tool-pulse 1.5s ease-in-out infinite;
+    }
+
+    .tool-call.executing .tool-name::after {
+      content: "...";
+      animation: ellipsis 1.5s steps(3, end) infinite;
+    }
+
+    @keyframes tool-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    @keyframes ellipsis {
+      0% { content: ""; }
+      33% { content: "."; }
+      66% { content: ".."; }
+      100% { content: "..."; }
+    }
+
     .streaming-cursor::after {
       content: "▊";
       animation: blink 1s step-end infinite;
@@ -610,7 +632,7 @@
 
           // Create tool call as its own message
           const toolDiv = document.createElement("div");
-          toolDiv.className = "message tool-call";
+          toolDiv.className = "message tool-call executing";
           toolDiv.innerHTML = `<div class="tool-name">${escapeHtml(event.toolName)}</div><div class="tool-content"></div>`;
           messagesEl.appendChild(toolDiv);
           currentToolEls[event.toolId] = toolDiv;
@@ -629,6 +651,7 @@
         case "tool_result": {
           const toolDiv = currentToolEls[event.toolId];
           if (toolDiv) {
+            toolDiv.classList.remove("executing");
             // Parse the accumulated input for nicer display
             const content = toolDiv.querySelector(".tool-content");
             content.textContent = parseToolInput(content.textContent);

@@ -106,7 +106,7 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
       cwd: sandbox || undefined,
       allowedTools: ["Read", "Edit", "Write", "WebSearch", "WebFetch"],
       disallowedTools: ["Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit", "ToolSearch"],
-      permissionMode: "default",
+      permissionMode: "bypassPermissions",
       systemPrompt: { type: "preset", preset: "claude_code" },
       settingSources: sandbox ? ["project"] : [],
       includePartialMessages: true,
@@ -115,9 +115,13 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
         // Only allow file ops within the sandbox
         const fileTools = ["Read", "Edit", "Write"];
         if (fileTools.includes(toolName)) {
-          const filePath = input?.file_path || "";
-          const resolved = path.resolve(sandbox, filePath);
-          if (!resolved.startsWith(sandbox)) {
+          const filePath = input?.file_path || input?.path || "";
+          // Normalize: if absolute, use as-is; if relative, resolve from sandbox
+          const resolved = path.isAbsolute(filePath)
+            ? path.normalize(filePath)
+            : path.normalize(path.join(sandbox, filePath));
+          if (!resolved.startsWith(path.normalize(sandbox))) {
+            console.log(`SANDBOX DENIED: ${toolName} ${filePath} -> ${resolved}`);
             return Promise.resolve({
               behavior: "deny",
               message: `File access is restricted to your personal directory.`,

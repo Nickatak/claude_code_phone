@@ -13,6 +13,7 @@ export interface WorkerPrompt {
   message: string;
   cwd: string;
   role: "admin" | "chat";
+  sandbox?: string;
   sessionId?: string; // set when resuming a conversation
 }
 

@@ -17,6 +17,11 @@ async function addDevice() {
   const role = roleInput === "admin" ? "admin" : "chat";
   const customToken = await ask("Custom token (leave blank to generate): ");
   const token = customToken || crypto.randomBytes(16).toString("hex");
+  let sandbox: string | null = null;
+  if (role === "chat") {
+    const sandboxInput = await ask("Sandbox directory (leave blank for none): ");
+    sandbox = sandboxInput || null;
+  }
 
   const db = getDb();
   db.insert(devices).values({
@@ -25,13 +30,15 @@ async function addDevice() {
     type,
     role,
     token,
+    sandbox,
   }).run();
 
   console.log(`\nDevice created:`);
-  console.log(`  Name:  ${name}`);
-  console.log(`  Type:  ${type}`);
-  console.log(`  Role:  ${role}`);
-  console.log(`  Token: ${token}`);
+  console.log(`  Name:    ${name}`);
+  console.log(`  Type:    ${type}`);
+  console.log(`  Role:    ${role}`);
+  console.log(`  Token:   ${token}`);
+  if (sandbox) console.log(`  Sandbox: ${sandbox}`);
 }
 
 async function listDevices() {
@@ -120,15 +127,16 @@ async function main() {
 
   switch (command) {
     case "add":
-      // Support non-interactive: cli add <name> <type> <role> [token]
+      // Support non-interactive: cli add <name> <type> <role> [token] [sandbox]
       if (process.argv[3]) {
         const name = process.argv[3];
         const type = (process.argv[4] || "client") as "worker" | "client";
         const role = (process.argv[5] || "chat") as "admin" | "chat";
         const token = process.argv[6] || crypto.randomBytes(16).toString("hex");
+        const sandbox = process.argv[7] || null;
         const db = getDb();
-        db.insert(devices).values({ id: uuid(), name, type, role, token }).run();
-        console.log(`Device created: ${name} (${type}, ${role}) token=${token}`);
+        db.insert(devices).values({ id: uuid(), name, type, role, token, sandbox }).run();
+        console.log(`Device created: ${name} (${type}, ${role}) token=${token}${sandbox ? ` sandbox=${sandbox}` : ""}`);
       } else {
         await addDevice();
       }

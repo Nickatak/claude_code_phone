@@ -81,12 +81,18 @@ function connect() {
 }
 
 async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
-  const { conversationId, message, cwd, role, sessionId } = msg;
+  const { conversationId, message, cwd, role, sandbox, sessionId } = msg;
   const toolUseRecords: ToolUseRecord[] = [];
   const activeTools: Map<string, { name: string; input: string }> = new Map();
   let fullText = "";
 
   const isAdmin = role === "admin";
+
+  // Ensure sandbox directory exists for chat users
+  if (!isAdmin && sandbox) {
+    const sandboxFs = require("fs");
+    sandboxFs.mkdirSync(sandbox, { recursive: true });
+  }
 
   try {
     const options: Record<string, unknown> = isAdmin ? {
@@ -97,11 +103,12 @@ async function handlePrompt(ws: WebSocket, msg: WorkerPrompt) {
       settingSources: ["project", "user"],
       includePartialMessages: true,
     } : {
-      allowedTools: ["WebSearch", "WebFetch"],
-      disallowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit", "ToolSearch"],
+      cwd: sandbox || undefined,
+      allowedTools: ["Read", "Edit", "Write", "WebSearch", "WebFetch"],
+      disallowedTools: ["Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit", "ToolSearch"],
       permissionMode: "bypassPermissions",
-      systemPrompt: "You are a helpful conversational assistant. You can search the web and fetch web pages, but you have NO access to files, bash, or any system resources. Do not attempt to use file or system tools.",
-      settingSources: [],
+      systemPrompt: { type: "preset", preset: "claude_code" },
+      settingSources: sandbox ? ["project"] : [],
       includePartialMessages: true,
       maxTurns: 5,
     };

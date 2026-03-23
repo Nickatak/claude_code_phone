@@ -25,14 +25,15 @@ const WORKER_TOKEN = process.env.AUTH_TOKEN; // Worker still uses env token for 
 interface SessionData {
   deviceId: string;
   role: "admin" | "chat";
+  sandbox?: string;
   expiry: number;
 }
 const activeSessions = new Map<string, SessionData>();
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-function createSession(deviceId: string, role: "admin" | "chat"): string {
+function createSession(deviceId: string, role: "admin" | "chat", sandbox?: string): string {
   const sessionToken = crypto.randomBytes(32).toString("hex");
-  activeSessions.set(sessionToken, { deviceId, role, expiry: Date.now() + SESSION_MAX_AGE_MS });
+  activeSessions.set(sessionToken, { deviceId, role, sandbox, expiry: Date.now() + SESSION_MAX_AGE_MS });
   return sessionToken;
 }
 
@@ -74,7 +75,7 @@ app.post("/api/login", (req, res) => {
   // Update last seen
   db.update(devices).set({ lastSeen: new Date().toISOString() }).where(eq(devices.id, device.id)).run();
 
-  const sessionToken = createSession(device.id, device.role as "admin" | "chat");
+  const sessionToken = createSession(device.id, device.role as "admin" | "chat", device.sandbox || undefined);
   res.cookie("rc_session", sessionToken, {
     httpOnly: true,
     sameSite: "strict",
@@ -355,6 +356,7 @@ clientWss.on("connection", (ws) => {
         message: msg.message,
         cwd,
         role: clientSession.role,
+        sandbox: clientSession.sandbox,
         sessionId,
       };
       workerSocket.send(JSON.stringify(prompt));

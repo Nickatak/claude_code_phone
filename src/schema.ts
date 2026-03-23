@@ -7,6 +7,7 @@ export const devices = sqliteTable("devices", {
   type: text("type", { enum: ["worker", "client"] }).notNull(),
   role: text("role", { enum: ["admin", "chat"] }).notNull().default("chat"),
   token: text("token").notNull().unique(),
+  sandbox: text("sandbox"),
   lastSeen: text("last_seen"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });

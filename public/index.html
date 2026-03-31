@@ -495,8 +495,8 @@
     // --- State ---
     let ws = null;
     let workerOnline = false;
-    let currentConversationId = null;
-    let currentCwd = null;
+    let currentConversationId = localStorage.getItem("rc_convId") || null;
+    let currentCwd = localStorage.getItem("rc_cwd") || null;
     let directories = [];
     let userRole = localStorage.getItem("rc_role") || "chat";
     let isStreaming = false;
@@ -545,6 +545,7 @@
           break;
         case "conversation_created":
           currentConversationId = msg.conversationId;
+          localStorage.setItem("rc_convId", msg.conversationId);
           break;
         case "stream_event":
           handleStreamEvent(msg.event);
@@ -774,6 +775,7 @@
 
     async function openConversation(id) {
       currentConversationId = id;
+      localStorage.setItem("rc_convId", id);
       messagesEl.innerHTML = "";
       sidebar.classList.remove("open");
 
@@ -798,6 +800,8 @@
       } else {
         currentConversationId = null;
         currentCwd = null;
+        localStorage.removeItem("rc_convId");
+        localStorage.removeItem("rc_cwd");
         messagesEl.innerHTML = "";
       }
     }
@@ -823,6 +827,8 @@
     function selectDir(dirPath) {
       currentConversationId = null;
       currentCwd = dirPath;
+      localStorage.removeItem("rc_convId");
+      localStorage.setItem("rc_cwd", dirPath);
       messagesEl.innerHTML = "";
       newChatModal.classList.remove("open");
     }
@@ -867,8 +873,10 @@
       updateSendBtn();
     });
 
+    const isMobile = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+
     inputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+      if (e.key === "Enter" && !e.shiftKey && !isMobile) {
         e.preventDefault();
         sendMessage();
       }
@@ -896,6 +904,9 @@
 
     // --- Init ---
     connectWs();
+    if (currentConversationId) {
+      openConversation(currentConversationId);
+    }
   </script>
 </body>
 </html>

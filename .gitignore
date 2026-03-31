@@ -3,6 +3,7 @@ dist/
 data/
 .env
 .env.actual
+.env.production
 *.db
 *.db-wal
 *.db-shm

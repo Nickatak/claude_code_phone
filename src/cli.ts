@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./env";
 import crypto from "crypto";
 import readline from "readline";
 import { v4 as uuid } from "uuid";

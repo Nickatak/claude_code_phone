@@ -4,11 +4,16 @@
   "description": "Claude Code (CLI/VS Code extension) provides a significantly better experience than claude.ai because of tools, file access, system prompts, and memory. But Claude Code is painful to use from a phone.",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "dev:worker": "tsx watch src/worker.ts",
+    "dev:server": "NODE_ENV=development tsx watch src/server.ts",
+    "dev:worker": "NODE_ENV=development tsx watch src/worker.ts",
+    "dev": "npm run dev:server & npm run dev:worker & wait",
+    "seed": "NODE_ENV=development tsx src/seed.ts",
+    "dev:fresh": "npm run seed && npm run dev",
     "build": "tsc",
     "start": "node dist/server.js",
-    "start:worker": "node dist/worker.js"
+    "start:worker": "node dist/worker.js",
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch"
   },
   "keywords": [],
   "author": "",

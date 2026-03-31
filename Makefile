@@ -1,17 +1,30 @@
-.PHONY: deploy dev dev-worker typecheck add-device list-devices remove-device restart-worker clear-conversations
+.PHONY: deploy dev dev-server dev-worker dev-all seed dev-fresh typecheck typecheck-watch add-device list-devices remove-device restart-worker clear-conversations
 
 deploy:
 	git push
 	ssh pixel-box "cd ~/remote_claude && git pull && npm install && sudo systemctl restart relay"
 
-dev:
-	npx tsx watch src/server.ts
+dev: dev-all
+
+dev-server:
+	NODE_ENV=development npx tsx watch src/server.ts
 
 dev-worker:
-	npx tsx watch src/worker.ts
+	NODE_ENV=development npx tsx watch src/worker.ts
+
+dev-all:
+	$(MAKE) dev-server & $(MAKE) dev-worker & wait
+
+seed:
+	NODE_ENV=development npx tsx src/seed.ts
+
+dev-fresh: seed dev-all
 
 typecheck:
 	npx tsc --noEmit
+
+typecheck-watch:
+	npx tsc --noEmit --watch
 
 add-device:
 	ssh pixel-box "cd ~/remote_claude && npx tsx src/cli.ts add"

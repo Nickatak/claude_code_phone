@@ -9,14 +9,13 @@ import type { SessionData } from "./sessions";
 import { getWorkerSocket, getWorkerResponsive } from "./state";
 
 export const app = express();
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-/**
- * Login: client POSTs a token, we look it up in the devices table.
- * If valid, set an HTTP-only session cookie (never visible to JS).
- */
+// --- Auth ---
+
 app.post("/api/login", (req, res) => {
   const { token } = req.body;
   const db = getDb();
@@ -27,7 +26,10 @@ app.post("/api/login", (req, res) => {
     return;
   }
 
-  db.update(devices).set({ lastSeen: new Date().toISOString() }).where(eq(devices.id, device.id)).run();
+  db.update(devices)
+    .set({ lastSeen: new Date().toISOString() })
+    .where(eq(devices.id, device.id))
+    .run();
 
   const sessionToken = createSession(device.id, device.role as "admin" | "chat", device.sandbox || undefined);
   res.cookie("rc_session", sessionToken, {
@@ -46,7 +48,6 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-/** Middleware: rejects unauthenticated requests, attaches session to req */
 export function requireAuth(
   req: express.Request,
   res: express.Response,
@@ -61,7 +62,8 @@ export function requireAuth(
   res.status(401).json({ error: "unauthorized" });
 }
 
-/** Root route: authenticated users get the chat app, others get the login page */
+// --- Static files ---
+
 app.get("/", (req, res, next) => {
   if (getSession(req.cookies?.rc_session)) {
     next();
@@ -78,11 +80,11 @@ app.get("/api/status", requireAuth, (_req, res) => {
   res.json({ workerOnline: getWorkerSocket() !== null && getWorkerResponsive() });
 });
 
-/** List conversations — scoped to the authenticated device (tenant isolation) */
 app.get("/api/conversations", requireAuth, (req, res) => {
   const db = getDb();
   const session = (req as any).session as SessionData;
-  const rows = db.select().from(conversations)
+  const rows = db.select()
+    .from(conversations)
     .where(eq(conversations.deviceId, session.deviceId))
     .orderBy(desc(conversations.updatedAt))
     .limit(50)
@@ -90,10 +92,13 @@ app.get("/api/conversations", requireAuth, (req, res) => {
   res.json(rows);
 });
 
-/** Get messages for a specific conversation */
 app.get("/api/conversations/:id/messages", requireAuth, (req, res) => {
   const db = getDb();
   const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const rows = db.select().from(messages).where(eq(messages.conversationId, id)).orderBy(messages.createdAt).all();
+  const rows = db.select()
+    .from(messages)
+    .where(eq(messages.conversationId, id))
+    .orderBy(messages.createdAt)
+    .all();
   res.json(rows);
 });

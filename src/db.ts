@@ -5,11 +5,6 @@ import fs from "fs";
 import path from "path";
 import * as schema from "./schema";
 
-/**
- * Path to the SQLite database file.
- * Lives on the relay server (Pixel 3a), NOT on the worker PC.
- * Defaults to ./data/relay.db relative to the project root.
- */
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "relay.db");
 
 let db: ReturnType<typeof drizzle>;
@@ -17,13 +12,8 @@ let db: ReturnType<typeof drizzle>;
 /**
  * Returns a singleton Drizzle ORM instance backed by better-sqlite3.
  *
- * On first call:
- * - Creates the data directory if it doesn't exist
- * - Opens the SQLite connection with WAL mode (better concurrent read performance)
- *   and foreign key enforcement
- * - Runs any pending Drizzle migrations from the /drizzle folder
- *
- * Subsequent calls return the cached instance.
+ * On first call: creates the data dir, opens SQLite with WAL mode
+ * and foreign keys, then runs any pending migrations.
  */
 export function getDb() {
   if (!db) {

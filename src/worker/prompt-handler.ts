@@ -32,7 +32,6 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
   const toolUseRecords: ToolUseRecord[] = [];
   const activeTools: Map<string, { name: string; input: string }> = new Map();
   let fullText = "";
-
   const isAdmin = role === "admin";
 
   // Create sandbox directory if it doesn't exist yet
@@ -40,51 +39,53 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
     fs.mkdirSync(sandbox, { recursive: true });
   }
 
-  // Timeout setup — kills the prompt if it runs too long
+  // Timeout — kills the prompt if it runs too long
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new TimeoutError(PROMPT_TIMEOUT_MS));
-    }, PROMPT_TIMEOUT_MS);
+    timeoutId = setTimeout(() => reject(new TimeoutError(PROMPT_TIMEOUT_MS)), PROMPT_TIMEOUT_MS);
   });
 
   try {
-    const options: Record<string, unknown> = isAdmin ? {
-      cwd: cwd || workerCwd,
-      allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
-      permissionMode: "bypassPermissions",
-      systemPrompt: { type: "preset", preset: "claude_code" },
-      settingSources: ["project", "user"],
-      includePartialMessages: true,
-    } : {
-      cwd: sandbox || undefined,
-      allowedTools: ["Read", "Edit", "Write", "WebSearch", "WebFetch"],
-      disallowedTools: ["Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit", "ToolSearch"],
-      permissionMode: "bypassPermissions",
-      systemPrompt: { type: "preset", preset: "claude_code" },
-      settingSources: sandbox ? ["project"] : [],
-      includePartialMessages: true,
-      maxTurns: 5,
-      canUseTool: sandbox ? (toolName: string, input: any) => {
-        const fileTools = ["Read", "Edit", "Write"];
-        if (fileTools.includes(toolName)) {
-          const filePath = input?.file_path || input?.path || "";
-          const resolved = path.isAbsolute(filePath)
-            ? path.normalize(filePath)
-            : path.normalize(path.join(sandbox, filePath));
-          if (!resolved.startsWith(path.normalize(sandbox))) {
-            console.log(`SANDBOX DENIED: ${toolName} ${filePath} -> ${resolved}`);
-            return Promise.resolve({
-              behavior: "deny",
-              message: `File access is restricted to your personal directory.`,
-            });
-          }
+    // SDK options differ by role
+    const options: Record<string, unknown> = isAdmin
+      ? {
+          cwd: cwd || workerCwd,
+          allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "WebSearch", "WebFetch"],
+          permissionMode: "bypassPermissions",
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          settingSources: ["project", "user"],
+          includePartialMessages: true,
         }
-        return Promise.resolve({ behavior: "allow" });
-      } : undefined,
-    };
+      : {
+          cwd: sandbox || undefined,
+          allowedTools: ["Read", "Edit", "Write", "WebSearch", "WebFetch"],
+          disallowedTools: ["Bash", "Glob", "Grep", "Agent", "TodoWrite", "NotebookEdit", "ToolSearch"],
+          permissionMode: "bypassPermissions",
+          systemPrompt: { type: "preset", preset: "claude_code" },
+          settingSources: sandbox ? ["project"] : [],
+          includePartialMessages: true,
+          maxTurns: 5,
+          canUseTool: sandbox
+            ? (toolName: string, input: any) => {
+                const fileTools = ["Read", "Edit", "Write"];
+                if (fileTools.includes(toolName)) {
+                  const filePath = input?.file_path || input?.path || "";
+                  const resolved = path.isAbsolute(filePath)
+                    ? path.normalize(filePath)
+                    : path.normalize(path.join(sandbox, filePath));
+                  if (!resolved.startsWith(path.normalize(sandbox))) {
+                    console.log(`SANDBOX DENIED: ${toolName} ${filePath} -> ${resolved}`);
+                    return Promise.resolve({
+                      behavior: "deny",
+                      message: `File access is restricted to your personal directory.`,
+                    });
+                  }
+                }
+                return Promise.resolve({ behavior: "allow" });
+              }
+            : undefined,
+        };
 
-    // Resume a previous conversation if we have a session ID
     if (sessionId) {
       options.resume = sessionId;
     }
@@ -94,10 +95,7 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
     // Process the SDK's async event stream, racing against the timeout
     const iterator = session[Symbol.asyncIterator]();
     while (true) {
-      const next = await Promise.race([
-        iterator.next(),
-        timeoutPromise,
-      ]);
+      const next = await Promise.race([iterator.next(), timeoutPromise]);
 
       if (next.done) break;
       const event = next.value;
@@ -107,7 +105,7 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
         return;
       }
 
-      // Monitor rate limit utilization — lock if threshold exceeded
+      // Rate limit monitoring
       if (event.type === "rate_limit_event") {
         const rle = event as any;
         if (rle.utilization !== undefined) {
@@ -115,12 +113,12 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
           console.log(`Rate limit utilization: ${Math.round(rle.utilization * 100)}%`);
           if (rle.utilization >= RATE_LIMIT_THRESHOLD) {
             _rateLimitLocked = true;
-            console.log(`LOCKED: Rate limit utilization hit ${Math.round(rle.utilization * 100)}% (threshold: ${Math.round(RATE_LIMIT_THRESHOLD * 100)}%)`);
+            console.log(`LOCKED: utilization hit ${Math.round(rle.utilization * 100)}% (threshold: ${Math.round(RATE_LIMIT_THRESHOLD * 100)}%)`);
           }
         }
       }
 
-      // Stream events — map SDK events to our simplified protocol and forward
+      // Stream events — map and forward
       if (event.type === "stream_event") {
         const sdkEvent = (event as any).event;
         const streamEvent = mapSdkEvent(sdkEvent, activeTools);
@@ -128,7 +126,6 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
           if (streamEvent.type === "text_delta") {
             fullText += streamEvent.text;
           }
-
           const outbound: WorkerEvent = {
             type: "stream_event",
             conversationId,
@@ -137,15 +134,10 @@ export async function handlePrompt(ws: WebSocket, msg: WorkerPrompt, workerCwd: 
           ws.send(JSON.stringify(outbound));
         }
       } else if (event.type === "result") {
-        // Response complete — send the final result with full text and session ID
         const resultEvent = event as any;
 
         for (const [, tool] of activeTools) {
-          toolUseRecords.push({
-            toolName: tool.name,
-            input: tool.input,
-            result: "",
-          });
+          toolUseRecords.push({ toolName: tool.name, input: tool.input, result: "" });
         }
 
         const result: WorkerResult = {

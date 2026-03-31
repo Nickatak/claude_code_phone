@@ -10,6 +10,8 @@ import type {
 import { handlePrompt, getRateLimitLocked, getLastUtilization } from "./worker/prompt-handler";
 import { scanProjectDirs } from "./worker/project-scanner";
 
+// --- Config ---
+
 const RELAY_URL = process.env.RELAY_URL;
 const AUTH_TOKEN = process.env.AUTH_TOKEN;
 const WORKER_CWD = process.env.WORKER_CWD || process.cwd();
@@ -58,6 +60,7 @@ function connect() {
 
   ws.on("open", () => {
     console.log("Connected to relay, authenticating...");
+
     const auth: WorkerAuth = { type: "auth", token: AUTH_TOKEN! };
     ws.send(JSON.stringify(auth));
 
@@ -66,6 +69,7 @@ function connect() {
     ws.send(JSON.stringify(dirMsg));
     console.log(`Worker registered and ready (${dirs.length} project dirs)`);
 
+    // Heartbeat
     if (heartbeatInterval) clearInterval(heartbeatInterval);
     heartbeatInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -86,9 +90,9 @@ function connect() {
     } catch {
       return;
     }
-
     if (msg.type !== "prompt") return;
 
+    // Rate limit kill switch
     if (getRateLimitLocked()) {
       const err: WorkerError = {
         type: "error",
@@ -118,5 +122,7 @@ function connect() {
     console.error("WebSocket error:", err.message);
   });
 }
+
+// --- Start ---
 
 connect();

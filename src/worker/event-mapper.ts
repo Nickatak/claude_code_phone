@@ -10,12 +10,12 @@ export function mapSdkEvent(
 ): StreamEvent | null {
   if (!sdkEvent || !sdkEvent.type) return null;
 
+  // Text or tool input delta
   if (sdkEvent.type === "content_block_delta") {
-    // Text chunk from Claude's response
     if (sdkEvent.delta?.type === "text_delta") {
       return { type: "text_delta", text: sdkEvent.delta.text };
     }
-    // Partial JSON for a tool call's input (streamed incrementally)
+
     if (sdkEvent.delta?.type === "input_json_delta") {
       const toolId = String(sdkEvent.index);
       const tool = activeTools.get(toolId);
@@ -30,16 +30,13 @@ export function mapSdkEvent(
     }
   }
 
-  // Claude is starting a new tool call
+  // Tool call starting
   if (
     sdkEvent.type === "content_block_start" &&
     sdkEvent.content_block?.type === "tool_use"
   ) {
     const toolId = String(sdkEvent.index);
-    activeTools.set(toolId, {
-      name: sdkEvent.content_block.name,
-      input: "",
-    });
+    activeTools.set(toolId, { name: sdkEvent.content_block.name, input: "" });
     return {
       type: "tool_start",
       toolName: sdkEvent.content_block.name,
@@ -47,16 +44,12 @@ export function mapSdkEvent(
     };
   }
 
-  // A content block (tool call) has finished
+  // Tool call finished
   if (sdkEvent.type === "content_block_stop") {
     const toolId = String(sdkEvent.index);
     const tool = activeTools.get(toolId);
     if (tool) {
-      return {
-        type: "tool_result",
-        toolId,
-        result: tool.input,
-      };
+      return { type: "tool_result", toolId, result: tool.input };
     }
   }
 

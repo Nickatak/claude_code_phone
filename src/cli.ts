@@ -9,6 +9,8 @@ import { eq, inArray } from "drizzle-orm";
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q: string): Promise<string> => new Promise((r) => rl.question(q, r));
 
+// --- Commands ---
+
 async function addDevice() {
   const name = await ask("Device name (e.g. Mom's phone): ");
   const typeInput = await ask("Type — worker or client [client]: ");
@@ -17,6 +19,7 @@ async function addDevice() {
   const role = roleInput === "admin" ? "admin" : "chat";
   const customToken = await ask("Custom token (leave blank to generate): ");
   const token = customToken || crypto.randomBytes(16).toString("hex");
+
   let sandbox: string | null = null;
   if (role === "chat") {
     const sandboxInput = await ask("Sandbox directory (leave blank for none): ");
@@ -24,14 +27,7 @@ async function addDevice() {
   }
 
   const db = getDb();
-  db.insert(devices).values({
-    id: uuid(),
-    name,
-    type,
-    role,
-    token,
-    sandbox,
-  }).run();
+  db.insert(devices).values({ id: uuid(), name, type, role, token, sandbox }).run();
 
   console.log(`\nDevice created:`);
   console.log(`  Name:    ${name}`);
@@ -104,7 +100,6 @@ async function clearConversations() {
     return;
   }
 
-  // Get conversation IDs for these devices
   const convs = db.select({ id: conversations.id })
     .from(conversations)
     .where(inArray(conversations.deviceId, deviceIds))
@@ -116,18 +111,18 @@ async function clearConversations() {
     return;
   }
 
-  // Delete messages then conversations
   db.delete(messages).where(inArray(messages.conversationId, convIds)).run();
   db.delete(conversations).where(inArray(conversations.id, convIds)).run();
   console.log(`Cleared ${convIds.length} conversation(s) and their messages.`);
 }
+
+// --- Main ---
 
 async function main() {
   const command = process.argv[2];
 
   switch (command) {
     case "add":
-      // Support non-interactive: cli add <name> <type> <role> [token] [sandbox]
       if (process.argv[3]) {
         const name = process.argv[3];
         const type = (process.argv[4] || "client") as "worker" | "client";

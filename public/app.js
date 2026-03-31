@@ -1,4 +1,5 @@
 // --- State ---
+
 let ws = null;
 let workerOnline = false;
 let currentConversationId = localStorage.getItem("rc_convId") || null;
@@ -10,6 +11,7 @@ let currentAssistantEl = null;
 let currentToolEls = {};
 
 // --- Elements ---
+
 const $ = (sel) => document.querySelector(sel);
 const offlineOverlay = $("#offline-overlay");
 const chatContainer = $("#chat-container");
@@ -27,6 +29,7 @@ const modalClose = $("#modal-close");
 const dirList = $("#dir-list");
 
 // --- WebSocket ---
+
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(`${proto}//${location.host}/ws/client`);
@@ -36,10 +39,7 @@ function connectWs() {
     handleMessage(msg);
   };
 
-  ws.onclose = () => {
-    setTimeout(connectWs, 3000);
-  };
-
+  ws.onclose = () => setTimeout(connectWs, 3000);
   ws.onerror = () => {};
 }
 
@@ -80,13 +80,16 @@ function setWorkerStatus(online) {
   }
 }
 
-// --- Markdown rendering ---
+// --- Markdown ---
+
 marked.setOptions({ breaks: true, gfm: true });
+
 function renderMarkdown(text) {
   return marked.parse(text);
 }
 
 // --- Streaming ---
+
 let streamingRawText = "";
 
 function ensureAssistantBubble() {
@@ -100,7 +103,6 @@ function ensureAssistantBubble() {
   return currentAssistantEl;
 }
 
-// Close current text bubble so the next text starts fresh
 function finalizeCurrentBubble() {
   if (currentAssistantEl) {
     currentAssistantEl.classList.remove("streaming-active");
@@ -115,7 +117,6 @@ function finalizeCurrentBubble() {
 function parseToolInput(raw) {
   try {
     const parsed = JSON.parse(raw);
-    // Show the most useful field depending on tool type
     if (parsed.command) return parsed.command;
     if (parsed.url) return parsed.url;
     if (parsed.file_path) return parsed.file_path;
@@ -146,10 +147,7 @@ function handleStreamEvent(event) {
       break;
     }
     case "tool_start": {
-      // Close any current text bubble
       finalizeCurrentBubble();
-
-      // Create tool call as its own message
       const toolDiv = document.createElement("div");
       toolDiv.className = "message tool-call executing";
       toolDiv.innerHTML = `<div class="tool-name">${escapeHtml(event.toolName)}</div><div class="tool-content"></div>`;
@@ -171,13 +169,10 @@ function handleStreamEvent(event) {
       const toolDiv = currentToolEls[event.toolId];
       if (toolDiv) {
         toolDiv.classList.remove("executing");
-        // Parse the accumulated input for nicer display
         const content = toolDiv.querySelector(".tool-content");
         content.textContent = parseToolInput(content.textContent);
       }
-      // Show spinner again — more processing may follow
       showSpinner();
-      // Next text will start a new bubble
       scrollToBottom();
       break;
     }
@@ -188,9 +183,7 @@ function finalizeResponse(msg) {
   isStreaming = false;
   hideSpinner();
 
-  // If we have fullText, always ensure it's visible
   if (msg.fullText) {
-    // Check if any assistant bubble already has this text
     const existingBubbles = messagesEl.querySelectorAll(".message.assistant");
     const hasText = Array.from(existingBubbles).some(b => b.textContent.trim());
 
@@ -209,11 +202,13 @@ function finalizeResponse(msg) {
 function showError(message) {
   isStreaming = false;
   hideSpinner();
+
   const el = document.createElement("div");
   el.className = "message assistant";
   el.style.borderLeft = `3px solid var(--error)`;
   el.textContent = `Error: ${message}`;
   messagesEl.appendChild(el);
+
   currentAssistantEl = null;
   currentToolEls = {};
   updateSendBtn();
@@ -221,17 +216,16 @@ function showError(message) {
 }
 
 // --- Sending ---
+
 function sendMessage() {
   const text = inputEl.value.trim();
   if (!text || !workerOnline || isStreaming) return;
 
-  // Show user message
   const userEl = document.createElement("div");
   userEl.className = "message user";
   userEl.textContent = text;
   messagesEl.appendChild(userEl);
 
-  // Send to relay
   const payload = {
     type: "send",
     conversationId: currentConversationId,
@@ -243,8 +237,6 @@ function sendMessage() {
   ws.send(JSON.stringify(payload));
 
   isStreaming = true;
-
-  // Show spinner
   showSpinner();
 
   inputEl.value = "";
@@ -252,6 +244,8 @@ function sendMessage() {
   updateSendBtn();
   scrollToBottom();
 }
+
+// --- Spinner ---
 
 let spinnerEl = null;
 
@@ -272,6 +266,7 @@ function hideSpinner() {
 }
 
 // --- Conversations ---
+
 async function loadConversations() {
   try {
     const res = await fetch("/api/conversations");
@@ -355,6 +350,7 @@ function selectDir(dirPath) {
 }
 
 // --- UI helpers ---
+
 function scrollToBottom() {
   requestAnimationFrame(() => {
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -387,6 +383,7 @@ function formatTime(iso) {
 }
 
 // --- Event listeners ---
+
 sendBtn.addEventListener("click", sendMessage);
 
 inputEl.addEventListener("input", () => {
@@ -418,13 +415,14 @@ modalClose.addEventListener("click", () => {
   newChatModal.classList.remove("open");
 });
 
-// Close modal on backdrop click
 newChatModal.addEventListener("click", (e) => {
   if (e.target === newChatModal) newChatModal.classList.remove("open");
 });
 
 // --- Init ---
+
 connectWs();
+
 if (currentConversationId) {
   openConversation(currentConversationId);
 }

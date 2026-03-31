@@ -11,8 +11,8 @@ import {
   getWorkerResponsive, setWorkerResponsive,
   getHeartbeatCheckInterval, setHeartbeatCheckInterval,
   HEARTBEAT_STALE_MS,
-  broadcastToClients,
 } from "./state";
+import { broadcastToClients } from "./broadcast";
 
 export function setupWorkerWs(wss: WebSocketServer) {
   wss.on("connection", (ws) => {

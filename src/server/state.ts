@@ -1,5 +1,4 @@
 import { WebSocket } from "ws";
-import type { SessionData } from "./sessions";
 
 /**
  * Shared mutable state for the relay server.
@@ -39,27 +38,3 @@ let _heartbeatCheckInterval: ReturnType<typeof setInterval> | null = null;
 export function getHeartbeatCheckInterval() { return _heartbeatCheckInterval; }
 export function setHeartbeatCheckInterval(v: ReturnType<typeof setInterval> | null) { _heartbeatCheckInterval = v; }
 
-// --- Broadcast ---
-
-/**
- * Send a message to connected clients.
- * If deviceId is provided, only sends to that device's clients (tenant isolation).
- * If omitted, broadcasts to all clients (status updates).
- */
-export function broadcastToClients(msg: object, deviceId?: string) {
-  const payload = JSON.stringify(msg);
-
-  for (const client of clientSockets) {
-    if (client.readyState !== WebSocket.OPEN) continue;
-
-    if (!deviceId) {
-      client.send(payload);
-      continue;
-    }
-
-    const clientSession = (client as any).session as SessionData | undefined;
-    if (clientSession && clientSession.deviceId === deviceId) {
-      client.send(payload);
-    }
-  }
-}

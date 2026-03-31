@@ -48,6 +48,7 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+/** Auth middleware. */
 export function requireAuth(
   req: express.Request,
   res: express.Response,

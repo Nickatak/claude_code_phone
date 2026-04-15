@@ -11,6 +11,8 @@
  */
 
 import { randomUUID } from "crypto";
+import fs from "fs";
+import path from "path";
 import { eq } from "drizzle-orm";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { getDb } from "../db";
@@ -19,6 +21,17 @@ import { mapSdkEvent, type ActiveTool } from "./event-mapper";
 import type { SSEEvent, ActiveProcess } from "../types";
 
 const PROMPT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Phone-specific CLAUDE.md loaded at startup. This replaces the global
+ * ~/.claude/CLAUDE.md (which has a "write to disk" delivery rule that
+ * doesn't work from a phone). Injected via systemPrompt.append so it
+ * coexists with project-level CLAUDE.md files in any working directory.
+ */
+const PHONE_CLAUDE_MD = fs.readFileSync(
+  path.join(__dirname, "..", "..", "config", "CLAUDE.md"),
+  "utf-8"
+);
 
 /** Active SDK processes keyed by conversation ID. */
 const activeProcesses = new Map<string, ActiveProcess>();
@@ -61,12 +74,12 @@ function emit(conversationId: string, event: SSEEvent): void {
   }
 }
 
-/** Stop an active SDK process. Writes partial state to DB. */
+/** Stop an active SDK process. The SDK handles cleanup via AbortController. */
 export function stop(conversationId: string): boolean {
-  const process = activeProcesses.get(conversationId);
-  if (!process) return false;
+  const active = activeProcesses.get(conversationId);
+  if (!active) return false;
 
-  process.abort();
+  active.abortController.abort();
   return true;
 }
 
@@ -82,15 +95,16 @@ export async function runPrompt(
   conversationId: string | undefined,
   promptText: string,
   cwd?: string
-): Promise<{ conversationId: string; messageId: string }> {
+): Promise<{ conversationId: string; messageId: string; cwd: string }> {
   const db = getDb();
 
   // Create or reuse conversation
+  const effectiveCwd = cwd || process.env.HOME || "/home/nick";
   if (!conversationId) {
     conversationId = randomUUID();
     db.insert(conversations).values({
       id: conversationId,
-      cwd: cwd || process.env.HOME || "/home/nick",
+      cwd: effectiveCwd,
       status: "running",
     }).run();
   } else {
@@ -116,24 +130,23 @@ export async function runPrompt(
   // Prepare assistant message placeholder
   const assistantMessageId = randomUUID();
 
-  // Abort controller for stop command
-  let aborted = false;
-  const abortFn = () => { aborted = true; };
+  // AbortController passed directly to the SDK for clean cancellation
+  const abortController = new AbortController();
 
   activeProcesses.set(conversationId, {
     conversationId,
     messageId: assistantMessageId,
-    abort: abortFn,
+    abortController,
   });
 
   // Run SDK in the background - don't await here so we can return immediately
   const convId = conversationId;
-  executePrompt(convId, assistantMessageId, promptText, cwd, () => aborted)
+  executePrompt(convId, assistantMessageId, promptText, cwd, abortController)
     .catch((error) => {
       console.error(`SDK execution error for ${convId}:`, error);
     });
 
-  return { conversationId: convId, messageId: assistantMessageId };
+  return { conversationId: convId, messageId: assistantMessageId, cwd: effectiveCwd };
 }
 
 /**
@@ -145,7 +158,7 @@ async function executePrompt(
   assistantMessageId: string,
   promptText: string,
   cwd: string | undefined,
-  isAborted: () => boolean
+  abortController: AbortController
 ): Promise<void> {
   const db = getDb();
   const activeTools: Map<string, ActiveTool> = new Map();
@@ -161,18 +174,20 @@ async function executePrompt(
 
   // Timeout to prevent runaway processes
   const timeoutId = setTimeout(() => {
-    const process = activeProcesses.get(conversationId);
-    if (process) {
-      process.abort();
-    }
+    abortController.abort();
   }, PROMPT_TIMEOUT_MS);
 
   try {
     const options: Record<string, unknown> = {
       cwd: workingDirectory,
+      abortController,
       permissionMode: "bypassPermissions",
-      systemPrompt: { type: "preset", preset: "claude_code" },
-      settingSources: ["project", "user"],
+      systemPrompt: {
+        type: "preset",
+        preset: "claude_code",
+        append: PHONE_CLAUDE_MD,
+      },
+      settingSources: ["project"],
       includePartialMessages: true,
     };
 
@@ -181,30 +196,9 @@ async function executePrompt(
     }
 
     const session = query({ prompt: promptText, options });
-    const iterator = session[Symbol.asyncIterator]();
 
-    while (true) {
-      if (isAborted()) {
-        // Write what we have so far
-        db.insert(messages).values({
-          id: assistantMessageId,
-          conversationId,
-          role: "assistant",
-          content: fullText || "(stopped)",
-        }).run();
-
-        db.update(conversations)
-          .set({ status: "stopped", updatedAt: new Date().toISOString() })
-          .where(eq(conversations.id, conversationId))
-          .run();
-
-        emit(conversationId, { type: "stopped" });
-        return;
-      }
-
-      const next = await iterator.next();
-      if (next.done) break;
-      const event = next.value;
+    for await (const event of session) {
+      // AbortController handles cancellation - the SDK throws AbortError
 
       // Accumulate text from text deltas (we don't stream these to client)
       if (event.type === "stream_event") {
@@ -268,6 +262,24 @@ async function executePrompt(
       }
     }
   } catch (error) {
+    // AbortController.abort() causes the SDK to throw - treat as a stop
+    if (abortController.signal.aborted) {
+      db.insert(messages).values({
+        id: assistantMessageId,
+        conversationId,
+        role: "assistant",
+        content: fullText || "(stopped)",
+      }).run();
+
+      db.update(conversations)
+        .set({ status: "stopped", updatedAt: new Date().toISOString() })
+        .where(eq(conversations.id, conversationId))
+        .run();
+
+      emit(conversationId, { type: "stopped" });
+      return;
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     // Store error as assistant message so it's visible in history

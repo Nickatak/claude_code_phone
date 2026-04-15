@@ -45,5 +45,5 @@ export type SSEEvent =
 export interface ActiveProcess {
   conversationId: string;
   messageId: string;
-  abort: () => void;
+  abortController: AbortController;
 }

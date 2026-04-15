@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:24-slim
 
 # Git is required by the Claude Code SDK for repo operations
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
@@ -13,6 +13,6 @@ RUN npm install --production
 COPY dist/ ./dist/
 COPY public/ ./public/
 
-EXPOSE 3000
+EXPOSE 9800
 
 CMD ["node", "dist/server.js"]

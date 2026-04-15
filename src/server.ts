@@ -12,7 +12,7 @@ import path from "path";
 import { getDb } from "./db";
 import { conversationRouter } from "./routes/conversations";
 
-const PORT = parseInt(process.env.PORT || "3000", 10);
+const PORT = parseInt(process.env.PORT || "9800", 10);
 
 const app = express();
 

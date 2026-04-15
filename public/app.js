@@ -18,6 +18,7 @@ const messagesContainer = document.getElementById("messages");
 const promptInput = document.getElementById("prompt-input");
 const sendBtn = document.getElementById("send-btn");
 const stopBtn = document.getElementById("stop-btn");
+const headerTitle = document.getElementById("header-title");
 const sidebar = document.getElementById("sidebar");
 const sidebarBtn = document.getElementById("sidebar-btn");
 const sidebarCloseBtn = document.getElementById("sidebar-close-btn");
@@ -229,6 +230,7 @@ async function sendMessage() {
       localStorage.setItem("rc_conversation_id", currentConversationId);
       connectSSE(currentConversationId);
     }
+    if (result.cwd) updateHeaderCwd(result.cwd);
   } catch (error) {
     removeThinking();
     addMessage("assistant", `Error: ${error.message}`);
@@ -291,8 +293,9 @@ async function openConversation(conversationId) {
       addMessage(msg.role, msg.content);
     }
 
-    // Check if there's an active prompt and reconnect SSE
+    // Check status and update header with cwd
     const status = await api(`/conversations/${conversationId}/status`);
+    updateHeaderCwd(status.cwd);
     if (status.status === "running") {
       showThinking();
       setProcessing(true);
@@ -320,6 +323,7 @@ function startNewChat() {
   messagesContainer.innerHTML = "";
   disconnectSSE();
   setProcessing(false);
+  updateHeaderCwd(null);
   promptInput.focus();
 }
 
@@ -338,6 +342,17 @@ function closeSidebar() {
 
 function scrollToBottom() {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+/** Show cwd in the header. Replaces home dir with ~ for brevity. */
+function updateHeaderCwd(cwd) {
+  if (!cwd) {
+    headerTitle.textContent = "~";
+    return;
+  }
+  const home = "/home/nick";
+  const display = cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
+  headerTitle.textContent = display || "~";
 }
 
 function escapeHtml(text) {

@@ -212,9 +212,28 @@ the attack surface.
 ### SDK configuration
 
 - `permissionMode: bypassPermissions` (same as local YOLO mode)
+- `abortController` passed to SDK for clean stop command support
 - Session resumption via SDK session IDs stored in DB
 - Conversation history fed as context for new sessions
-- Working directory set per conversation (project picker in UI)
+- Working directory set per conversation, changeable on resume
+
+### CLAUDE.md handling
+
+The global `~/.claude/CLAUDE.md` has a delivery rule ("write substantial output
+to disk") that doesn't work from a phone. Instead of loading the global config:
+
+- `settingSources: ["project"]` - skips global user CLAUDE.md
+- `systemPrompt.append` injects `config/CLAUDE.md` (phone-specific version)
+- Project-level CLAUDE.md files still load normally per working directory
+
+The phone CLAUDE.md is identical to the global except for the delivery rule:
+```
+- delivery: "substantial output to disk as stable artifacts..."
++ delivery: "all output in chat; do not write files as artifacts"
+```
+
+Run `make sync-claude` to re-sync from the global after editing `~/.claude/CLAUDE.md`.
+This copies the global, patches the delivery rule, and writes to `config/CLAUDE.md`.
 
 ## Scope
 

@@ -218,7 +218,6 @@ async function executePrompt(
           if (mapped.type === "tool_start") {
             db.insert(toolEvents).values({
               conversationId,
-              messageId: assistantMessageId,
               toolName: mapped.toolName,
               toolId: mapped.toolId,
               status: "running",

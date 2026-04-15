@@ -99,7 +99,7 @@ export async function runPrompt(
   const db = getDb();
 
   // Create or reuse conversation
-  const effectiveCwd = cwd || process.env.HOME || "/home/nick";
+  const effectiveCwd = cwd || process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
   if (!conversationId) {
     conversationId = randomUUID();
     db.insert(conversations).values({
@@ -170,7 +170,7 @@ async function executePrompt(
     .where(eq(conversations.id, conversationId))
     .get();
 
-  const workingDirectory = cwd || conversation?.cwd || process.env.HOME || "/home/nick";
+  const workingDirectory = cwd || conversation?.cwd || process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
 
   // Timeout to prevent runaway processes
   const timeoutId = setTimeout(() => {

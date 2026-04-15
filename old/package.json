@@ -1,0 +1,43 @@
+{
+  "name": "remote_claude",
+  "version": "1.0.0",
+  "description": "Claude Code (CLI/VS Code extension) provides a significantly better experience than claude.ai because of tools, file access, system prompts, and memory. But Claude Code is painful to use from a phone.",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev:server": "NODE_ENV=development tsx watch src/server.ts",
+    "dev:worker": "NODE_ENV=development tsx watch src/worker.ts",
+    "dev": "npm run dev:server & npm run dev:worker & wait",
+    "seed": "NODE_ENV=development tsx src/seed.ts",
+    "dev:fresh": "npm run seed && npm run dev",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "start:worker": "node dist/worker.js",
+    "typecheck": "tsc --noEmit",
+    "typecheck:watch": "tsc --noEmit --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.81",
+    "better-sqlite3": "^11.10.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.3.1",
+    "drizzle-orm": "^0.45.1",
+    "express": "^5.2.1",
+    "uuid": "^13.0.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,12 @@
+services:
+  remote-claude:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /home/nick:/home/nick
+    environment:
+      - HOME=/home/nick
+      - NODE_ENV=production
+      - DB_PATH=/app/data/remote-claude.db

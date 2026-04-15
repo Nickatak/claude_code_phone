@@ -1,33 +1,66 @@
-.PHONY: build dev start stop restart logs clean sync-claude
+.PHONY: help dev build start stop restart logs clean sync-claude docker-up docker-down docker-logs docker-rebuild docker-shell
 
-# Development
+# ============================================================================
+# HELP
+# ============================================================================
+
+help:
+	@echo "remote-claude - command reference"
+	@echo ""
+	@echo "Development"
+	@echo "  make dev               Run dev server (tsx watch, hot reload)"
+	@echo "  make build             Build TypeScript to dist/"
+	@echo ""
+	@echo "Docker"
+	@echo "  make docker-up         Build and start container (detached)"
+	@echo "  make docker-down       Stop and remove container"
+	@echo "  make docker-rebuild    Force rebuild image and restart"
+	@echo "  make docker-logs       Stream container logs"
+	@echo "  make docker-shell      Shell into running container"
+	@echo ""
+	@echo "Utilities"
+	@echo "  make sync-claude       Sync phone CLAUDE.md from global"
+	@echo "  make clean             Remove dist/ and node_modules/"
+
+# ============================================================================
+# DEVELOPMENT
+# ============================================================================
+
 dev:
 	npm run dev
 
-# Build TypeScript and Docker image
 build:
 	npm run build
-	docker compose build
 
-# Production (Docker)
-start:
-	docker compose up -d
+# ============================================================================
+# DOCKER
+# ============================================================================
 
-stop:
-	docker compose down
+docker-up: build
+	docker compose up -d --build
 
-restart:
-	docker compose restart
+docker-down:
+	docker compose down --remove-orphans
 
-logs:
-	docker compose logs -f
+docker-rebuild: build
+	docker compose up -d --build --force-recreate
 
-# Sync phone CLAUDE.md from global, replacing the delivery rule
+docker-logs:
+	docker compose logs -f --tail=200
+
+docker-shell:
+	docker compose exec remote-claude sh
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
+
 sync-claude:
 	@cp ~/.claude/CLAUDE.md config/CLAUDE.md
 	@sed -i 's/delivery: "substantial output to disk as stable artifacts; chat is the discussion layer; make a scratch dir if necessary"/delivery: "all output in chat; do not write files as artifacts"/' config/CLAUDE.md
 	@echo "Synced config/CLAUDE.md from ~/.claude/CLAUDE.md (delivery rule patched for phone)"
 
-# Cleanup
 clean:
 	rm -rf dist node_modules
+
+.DEFAULT_GOAL := help

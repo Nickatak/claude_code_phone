@@ -9,7 +9,7 @@
 
 import express from "express";
 import path from "path";
-import { getDb } from "./db";
+import { getDb } from "./db/index";
 import { conversationRouter } from "./routes/conversations";
 
 const PORT = parseInt(process.env.PORT || "9800", 10);

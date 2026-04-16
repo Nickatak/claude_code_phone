@@ -1,10 +1,10 @@
 /**
- * Manages Claude Code SDK child processes.
+ * Manages Claude Code SDK agent sessions.
  *
  * Each prompt spawns one SDK query. The process manager tracks active
- * processes so they can be stopped on demand, writes tool events and
- * results to the database as they happen (durable execution), and
- * emits SSE events to any connected clients.
+ * processes so they can be stopped on demand and orchestrates the flow
+ * between the SDK, the database (via repository), and connected clients
+ * (via SSE emitter).
  *
  * Only one prompt runs at a time per conversation. If a conversation
  * already has an active process, new prompts are rejected.
@@ -13,12 +13,10 @@
 import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
-import { eq } from "drizzle-orm";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { getDb } from "../db";
-import { conversations, messages, toolEvents } from "../schema";
-import { mapSdkEvent, type ActiveTool } from "./event-mapper";
-import type { SSEEvent, ActiveProcess } from "../types";
+import * as repository from "../db/repository";
+import * as emitter from "../sse/emitter";
+import { EventMapper } from "./event-mapper";
 
 const PROMPT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -33,45 +31,19 @@ const PHONE_CLAUDE_MD = fs.readFileSync(
   "utf-8"
 );
 
+/** Internal tracking for active SDK processes. */
+interface ActiveProcess {
+  conversationId: string;
+  messageId: string;
+  abortController: AbortController;
+}
+
 /** Active SDK processes keyed by conversation ID. */
 const activeProcesses = new Map<string, ActiveProcess>();
-
-/** SSE listeners keyed by conversation ID. Multiple clients can watch one conversation. */
-const sseListeners = new Map<string, Set<(event: SSEEvent) => void>>();
 
 /** Check if a conversation has an active SDK process running. */
 export function isRunning(conversationId: string): boolean {
   return activeProcesses.has(conversationId);
-}
-
-/** Register an SSE listener for a conversation. Returns an unsubscribe function. */
-export function subscribe(
-  conversationId: string,
-  listener: (event: SSEEvent) => void
-): () => void {
-  let listeners = sseListeners.get(conversationId);
-  if (!listeners) {
-    listeners = new Set();
-    sseListeners.set(conversationId, listeners);
-  }
-  listeners.add(listener);
-
-  return () => {
-    listeners!.delete(listener);
-    if (listeners!.size === 0) {
-      sseListeners.delete(conversationId);
-    }
-  };
-}
-
-/** Emit an SSE event to all listeners for a conversation. */
-function emit(conversationId: string, event: SSEEvent): void {
-  const listeners = sseListeners.get(conversationId);
-  if (listeners) {
-    for (const listener of listeners) {
-      listener(event);
-    }
-  }
 }
 
 /** Stop an active SDK process. The SDK handles cleanup via AbortController. */
@@ -96,36 +68,22 @@ export async function runPrompt(
   promptText: string,
   cwd?: string
 ): Promise<{ conversationId: string; messageId: string; cwd: string }> {
-  const db = getDb();
-
   // Create or reuse conversation
   const effectiveCwd = cwd || process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
   if (!conversationId) {
     conversationId = randomUUID();
-    db.insert(conversations).values({
-      id: conversationId,
-      cwd: effectiveCwd,
-      status: "running",
-    }).run();
+    repository.createConversation(conversationId, effectiveCwd);
   } else {
     // Reject if already running
     if (activeProcesses.has(conversationId)) {
       throw new Error("Conversation already has an active prompt");
     }
-    db.update(conversations)
-      .set({ status: "running", updatedAt: new Date().toISOString() })
-      .where(eq(conversations.id, conversationId))
-      .run();
+    repository.updateConversationStatus(conversationId, "running");
   }
 
   // Store user message
   const userMessageId = randomUUID();
-  db.insert(messages).values({
-    id: userMessageId,
-    conversationId,
-    role: "user",
-    content: promptText,
-  }).run();
+  repository.insertMessage(userMessageId, conversationId, "user", promptText);
 
   // Prepare assistant message placeholder
   const assistantMessageId = randomUUID();
@@ -160,16 +118,11 @@ async function executePrompt(
   cwd: string | undefined,
   abortController: AbortController
 ): Promise<void> {
-  const db = getDb();
-  const activeTools: Map<string, ActiveTool> = new Map();
+  const mapper = new EventMapper();
   let fullText = "";
 
   // Look up session ID for conversation resumption
-  const conversation = db.select()
-    .from(conversations)
-    .where(eq(conversations.id, conversationId))
-    .get();
-
+  const conversation = repository.getConversation(conversationId);
   const workingDirectory = cwd || conversation?.cwd || process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
 
   // Timeout to prevent runaway processes
@@ -201,8 +154,6 @@ async function executePrompt(
     const session = query({ prompt: promptText, options });
 
     for await (const event of session) {
-      // AbortController handles cancellation - the SDK throws AbortError
-
       // Accumulate text from text deltas (we don't stream these to client)
       if (event.type === "stream_event") {
         const sdkEvent = (event as any).event;
@@ -216,22 +167,14 @@ async function executePrompt(
         }
 
         // Map tool events and emit + persist
-        const mapped = mapSdkEvent(sdkEvent, activeTools);
+        const mapped = mapper.map(sdkEvent);
         if (mapped) {
           if (mapped.type === "tool_start") {
-            db.insert(toolEvents).values({
-              conversationId,
-              toolName: mapped.toolName,
-              toolId: mapped.toolId,
-              status: "running",
-            }).run();
-            emit(conversationId, mapped);
+            repository.insertToolEvent(conversationId, mapped.toolName, mapped.toolId);
+            emitter.emit(conversationId, mapped);
           } else if (mapped.type === "tool_complete") {
-            db.update(toolEvents)
-              .set({ input: mapped.input, status: "complete" })
-              .where(eq(toolEvents.toolId, mapped.toolId))
-              .run();
-            emit(conversationId, mapped);
+            repository.completeToolEvent(mapped.toolId, mapped.input);
+            emitter.emit(conversationId, mapped);
           }
         }
       } else if (event.type === "result") {
@@ -239,24 +182,12 @@ async function executePrompt(
         const sessionId = resultEvent.session_id || conversation?.sessionId || "";
 
         // Store the complete assistant message
-        db.insert(messages).values({
-          id: assistantMessageId,
-          conversationId,
-          role: "assistant",
-          content: fullText,
-        }).run();
+        repository.insertMessage(assistantMessageId, conversationId, "assistant", fullText);
 
         // Update conversation with session ID for future resumption
-        db.update(conversations)
-          .set({
-            sessionId,
-            status: "idle",
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(conversations.id, conversationId))
-          .run();
+        repository.updateConversationStatus(conversationId, "idle", sessionId);
 
-        emit(conversationId, {
+        emitter.emit(conversationId, {
           type: "response_complete",
           messageId: assistantMessageId,
           content: fullText,
@@ -266,38 +197,28 @@ async function executePrompt(
   } catch (error) {
     // AbortController.abort() causes the SDK to throw - treat as a stop
     if (abortController.signal.aborted) {
-      db.insert(messages).values({
-        id: assistantMessageId,
+      repository.insertMessage(
+        assistantMessageId,
         conversationId,
-        role: "assistant",
-        content: fullText || "(stopped)",
-      }).run();
-
-      db.update(conversations)
-        .set({ status: "stopped", updatedAt: new Date().toISOString() })
-        .where(eq(conversations.id, conversationId))
-        .run();
-
-      emit(conversationId, { type: "stopped" });
+        "assistant",
+        fullText || "(stopped)"
+      );
+      repository.updateConversationStatus(conversationId, "stopped");
+      emitter.emit(conversationId, { type: "stopped" });
       return;
     }
 
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     // Store error as assistant message so it's visible in history
-    db.insert(messages).values({
-      id: assistantMessageId,
+    repository.insertMessage(
+      assistantMessageId,
       conversationId,
-      role: "assistant",
-      content: `Error: ${errorMessage}`,
-    }).run();
-
-    db.update(conversations)
-      .set({ status: "error", updatedAt: new Date().toISOString() })
-      .where(eq(conversations.id, conversationId))
-      .run();
-
-    emit(conversationId, { type: "error", message: errorMessage });
+      "assistant",
+      `Error: ${errorMessage}`
+    );
+    repository.updateConversationStatus(conversationId, "error");
+    emitter.emit(conversationId, { type: "error", message: errorMessage });
   } finally {
     clearTimeout(timeoutId);
     activeProcesses.delete(conversationId);

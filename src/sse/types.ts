@@ -1,12 +1,11 @@
 /**
- * Shared types for the v2 protocol.
+ * SSE event types pushed to connected clients.
  *
- * Unlike v1's relay protocol (worker <-> relay <-> client), v2 has a
- * single server. These types define the SSE events pushed to clients
- * and the internal structures used by the SDK process manager.
+ * These define the protocol between the server and the mobile frontend.
+ * Tool events stream in real time, the final response arrives as one
+ * complete message, and errors/stops are signaled immediately.
  */
 
-// SSE events pushed to connected clients
 export interface ToolStartEvent {
   type: "tool_start";
   toolName: string;
@@ -40,10 +39,3 @@ export type SSEEvent =
   | ResponseCompleteEvent
   | ErrorEvent
   | StoppedEvent;
-
-// Internal tracking for active SDK processes
-export interface ActiveProcess {
-  conversationId: string;
-  messageId: string;
-  abortController: AbortController;
-}

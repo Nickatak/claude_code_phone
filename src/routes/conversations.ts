@@ -1,29 +1,23 @@
 /**
  * REST + SSE routes for conversation management.
  *
- * Handles creating conversations, sending messages, fetching history,
- * stopping active prompts, and streaming tool events via SSE. All
- * persistence is in SQLite - clients can disconnect and catch up later.
+ * Thin HTTP layer. Validates input, delegates to the repository for
+ * data access, and to the process-manager for SDK operations. No
+ * direct database imports - everything goes through the repository.
  */
 
 import { Router } from "express";
-import { desc, eq } from "drizzle-orm";
-import { getDb } from "../db";
-import { conversations, messages, toolEvents } from "../schema";
-import { runPrompt, stop, isRunning, subscribe } from "../sdk/process-manager";
-import type { SSEEvent } from "../types";
+import * as repository from "../db/repository";
+import { subscribe } from "../sse/emitter";
+import { runPrompt, stop, isRunning } from "../sdk/process-manager";
+import type { SSEEvent } from "../sse/types";
 
 export const conversationRouter = Router();
 
 /** List all conversations, most recent first. */
 conversationRouter.get("/", (_req, res) => {
   try {
-    const db = getDb();
-    const rows = db.select()
-      .from(conversations)
-      .orderBy(desc(conversations.updatedAt))
-      .limit(50)
-      .all();
+    const rows = repository.listConversations();
     res.json(rows);
   } catch (error) {
     console.error("Failed to list conversations:", error);
@@ -34,13 +28,8 @@ conversationRouter.get("/", (_req, res) => {
 /** Get messages for a conversation. */
 conversationRouter.get("/:id/messages", (req, res) => {
   try {
-    const db = getDb();
     const conversationId = req.params.id as string;
-    const rows = db.select()
-      .from(messages)
-      .where(eq(messages.conversationId, conversationId))
-      .orderBy(messages.createdAt)
-      .all();
+    const rows = repository.getMessages(conversationId);
     res.json(rows);
   } catch (error) {
     console.error("Failed to get messages:", error);
@@ -51,13 +40,8 @@ conversationRouter.get("/:id/messages", (req, res) => {
 /** Get tool events for a conversation. Used for catch-up after reconnect. */
 conversationRouter.get("/:id/tools", (req, res) => {
   try {
-    const db = getDb();
     const conversationId = req.params.id as string;
-    const rows = db.select()
-      .from(toolEvents)
-      .where(eq(toolEvents.conversationId, conversationId))
-      .orderBy(toolEvents.createdAt)
-      .all();
+    const rows = repository.getToolEvents(conversationId);
     res.json(rows);
   } catch (error) {
     console.error("Failed to get tool events:", error);
@@ -103,11 +87,7 @@ conversationRouter.get("/:id/status", (req, res) => {
   const running = isRunning(conversationId);
 
   try {
-    const db = getDb();
-    const conversation = db.select()
-      .from(conversations)
-      .where(eq(conversations.id, conversationId))
-      .get();
+    const conversation = repository.getConversation(conversationId);
 
     if (!conversation) {
       res.status(404).json({ error: "Conversation not found" });

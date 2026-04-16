@@ -11,7 +11,7 @@ import fs from "fs";
 import path from "path";
 import * as schema from "./schema";
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "remote-claude.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "..", "data", "remote-claude.db");
 
 let db: ReturnType<typeof drizzle<typeof schema>>;
 

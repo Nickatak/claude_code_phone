@@ -9,3 +9,4 @@ data/
 *.db-shm
 pmbootstrap/
 pmbootstrap-venv/
+config/CLAUDE.md

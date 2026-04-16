@@ -212,6 +212,7 @@ async function sendMessage() {
   if (!text || isProcessing) return;
 
   promptInput.value = "";
+  sessionStorage.removeItem("rc_draft");
   autoResize();
   addMessage("user", text);
   showThinking();
@@ -375,7 +376,10 @@ sidebarBtn.addEventListener("click", openSidebar);
 sidebarCloseBtn.addEventListener("click", closeSidebar);
 newChatBtn.addEventListener("click", startNewChat);
 
-promptInput.addEventListener("input", autoResize);
+promptInput.addEventListener("input", () => {
+  autoResize();
+  sessionStorage.setItem("rc_draft", promptInput.value);
+});
 
 // Ctrl+Enter to send on desktop, Enter adds newline on mobile
 promptInput.addEventListener("keydown", (event) => {
@@ -386,6 +390,13 @@ promptInput.addEventListener("keydown", (event) => {
 });
 
 // -- Init --
+
+// Restore draft if the app was backgrounded
+const savedDraft = sessionStorage.getItem("rc_draft");
+if (savedDraft) {
+  promptInput.value = savedDraft;
+  autoResize();
+}
 
 // If we had a conversation open, reconnect to it
 const savedConversationId = localStorage.getItem("rc_conversation_id");

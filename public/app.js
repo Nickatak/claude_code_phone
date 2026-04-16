@@ -135,7 +135,13 @@ function addToolCard(toolId, toolName) {
     card.classList.toggle("expanded");
   });
 
-  messagesContainer.appendChild(card);
+  // Insert before the thinking indicator so it stays at the bottom
+  const thinking = document.getElementById("thinking-indicator");
+  if (thinking) {
+    messagesContainer.insertBefore(card, thinking);
+  } else {
+    messagesContainer.appendChild(card);
+  }
   scrollToBottom();
 }
 

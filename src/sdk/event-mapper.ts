@@ -14,7 +14,10 @@ import type { ToolStartEvent, ToolCompleteEvent } from "../types";
 export interface ActiveTool {
   name: string;
   input: string;
+  toolId: string;
 }
+
+let toolCounter = 0;
 
 /**
  * Process a single SDK stream event and return a simplified event if
@@ -31,8 +34,9 @@ export function mapSdkEvent(
     sdkEvent.type === "content_block_start" &&
     sdkEvent.content_block?.type === "tool_use"
   ) {
-    const toolId = String(sdkEvent.index);
-    activeTools.set(toolId, { name: sdkEvent.content_block.name, input: "" });
+    const blockIndex = String(sdkEvent.index);
+    const toolId = `tool-${++toolCounter}`;
+    activeTools.set(blockIndex, { name: sdkEvent.content_block.name, input: "", toolId });
     return {
       type: "tool_start",
       toolName: sdkEvent.content_block.name,
@@ -45,8 +49,8 @@ export function mapSdkEvent(
     sdkEvent.type === "content_block_delta" &&
     sdkEvent.delta?.type === "input_json_delta"
   ) {
-    const toolId = String(sdkEvent.index);
-    const tool = activeTools.get(toolId);
+    const blockIndex = String(sdkEvent.index);
+    const tool = activeTools.get(blockIndex);
     if (tool) {
       tool.input += sdkEvent.delta.partial_json;
     }
@@ -55,15 +59,15 @@ export function mapSdkEvent(
 
   // Tool call finished - emit the complete input
   if (sdkEvent.type === "content_block_stop") {
-    const toolId = String(sdkEvent.index);
-    const tool = activeTools.get(toolId);
+    const blockIndex = String(sdkEvent.index);
+    const tool = activeTools.get(blockIndex);
     if (tool) {
       const event: ToolCompleteEvent = {
         type: "tool_complete",
-        toolId,
+        toolId: tool.toolId,
         input: tool.input,
       };
-      activeTools.delete(toolId);
+      activeTools.delete(blockIndex);
       return event;
     }
   }

@@ -58,6 +58,7 @@ docker-shell:
 sync-claude:
 	@cp ~/.claude/CLAUDE.md config/CLAUDE.md
 	@sed -i 's/delivery: "substantial output to disk as stable artifacts; chat is the discussion layer; make a scratch dir if necessary"/delivery: "all output in chat; do not write files as artifacts"/' config/CLAUDE.md
+	@sed -i 's/localhost:8191/host.docker.internal:8191/g' config/CLAUDE.md
 	@cat config/phone-additions.md >> config/CLAUDE.md
 	@echo "Synced config/CLAUDE.md from ~/.claude/CLAUDE.md (delivery rule patched, phone additions appended)"
 

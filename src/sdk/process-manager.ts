@@ -188,6 +188,9 @@ async function executePrompt(
         append: PHONE_CLAUDE_MD,
       },
       settingSources: ["project"],
+      settings: {
+        claudeMdExcludes: ["/home/nick/.claude/CLAUDE.md"],
+      },
       includePartialMessages: true,
     };
 

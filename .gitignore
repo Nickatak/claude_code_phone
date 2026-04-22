@@ -10,3 +10,4 @@ data/
 pmbootstrap/
 pmbootstrap-venv/
 config/CLAUDE.md
+.claude/

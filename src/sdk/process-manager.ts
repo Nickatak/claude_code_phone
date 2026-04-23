@@ -21,10 +21,10 @@ import { EventMapper } from "./event-mapper";
 const PROMPT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
- * Phone-specific CLAUDE.md loaded at startup. This replaces the global
- * ~/.claude/CLAUDE.md (which has a "write to disk" delivery rule that
- * doesn't work from a phone). Injected via systemPrompt.append so it
- * coexists with project-level CLAUDE.md files in any working directory.
+ * Phone-specific CLAUDE.md loaded at startup. Synced from the desktop
+ * output style with the "write to disk" delivery rule rewritten for
+ * chat-only delivery. Injected via systemPrompt.append so it coexists
+ * with project-level CLAUDE.md files in any working directory.
  */
 const PHONE_CLAUDE_MD = fs.readFileSync(
   path.join(__dirname, "..", "..", "config", "CLAUDE.md"),
@@ -141,9 +141,6 @@ async function executePrompt(
         append: PHONE_CLAUDE_MD,
       },
       settingSources: ["project"],
-      settings: {
-        claudeMdExcludes: ["/home/nick/.claude/CLAUDE.md"],
-      },
       includePartialMessages: true,
     };
 

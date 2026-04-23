@@ -2,7 +2,7 @@ FROM node:24-slim
 
 # Git for SDK repo operations, python3 + build tools for native modules (better-sqlite3)
 RUN apt-get update && \
-    apt-get install -y git python3 make g++ curl jq ripgrep && \
+    apt-get install -y git python3 make g++ curl jq ripgrep docker.io && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI globally (the SDK spawns it as a subprocess)

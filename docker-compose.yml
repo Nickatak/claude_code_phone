@@ -4,8 +4,11 @@ services:
     restart: unless-stopped
     ports:
       - "9800:9800"
+    group_add:
+      - ${DOCKER_GID:-999}
     volumes:
       - /home/nick:/home/nick
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - HOME=/home/nick
       - NODE_ENV=production

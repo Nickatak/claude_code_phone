@@ -53,14 +53,14 @@ conversationRouter.get("/:id/tools", (req, res) => {
 conversationRouter.post("/:id/messages", async (req, res) => {
   try {
     const conversationId = req.params.id === "new" ? undefined : req.params.id as string;
-    const { message, cwd } = req.body;
+    const { message } = req.body;
 
     if (!message || typeof message !== "string") {
       res.status(400).json({ error: "message is required" });
       return;
     }
 
-    const result = await runPrompt(conversationId, message, cwd);
+    const result = await runPrompt(conversationId, message);
     res.status(202).json(result);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -97,7 +97,6 @@ conversationRouter.get("/:id/status", (req, res) => {
     res.json({
       status: running ? "running" : conversation.status,
       sessionId: conversation.sessionId,
-      cwd: conversation.cwd,
     });
   } catch (error) {
     console.error("Failed to get conversation status:", error);

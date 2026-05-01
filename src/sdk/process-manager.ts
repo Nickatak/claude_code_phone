@@ -65,30 +65,23 @@ export function stop(conversationId: string): boolean {
  */
 export async function runPrompt(
   conversationId: string | undefined,
-  promptText: string,
-  cwd?: string
-): Promise<{ conversationId: string; messageId: string; cwd: string }> {
-  // Create or reuse conversation
-  const effectiveCwd = cwd || process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
+  promptText: string
+): Promise<{ conversationId: string; messageId: string }> {
+  const workingDirectory = process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
   if (!conversationId) {
     conversationId = randomUUID();
-    repository.createConversation(conversationId, effectiveCwd);
+    repository.createConversation(conversationId, workingDirectory);
   } else {
-    // Reject if already running
     if (activeProcesses.has(conversationId)) {
       throw new Error("Conversation already has an active prompt");
     }
     repository.updateConversationStatus(conversationId, "running");
   }
 
-  // Store user message
   const userMessageId = randomUUID();
   repository.insertMessage(userMessageId, conversationId, "user", promptText);
 
-  // Prepare assistant message placeholder
   const assistantMessageId = randomUUID();
-
-  // AbortController passed directly to the SDK for clean cancellation
   const abortController = new AbortController();
 
   activeProcesses.set(conversationId, {
@@ -97,14 +90,13 @@ export async function runPrompt(
     abortController,
   });
 
-  // Run SDK in the background - don't await here so we can return immediately
   const convId = conversationId;
-  executePrompt(convId, assistantMessageId, promptText, cwd, abortController)
+  executePrompt(convId, assistantMessageId, promptText, abortController)
     .catch((error) => {
       console.error(`SDK execution error for ${convId}:`, error);
     });
 
-  return { conversationId: convId, messageId: assistantMessageId, cwd: effectiveCwd };
+  return { conversationId: convId, messageId: assistantMessageId };
 }
 
 /**
@@ -115,15 +107,13 @@ async function executePrompt(
   conversationId: string,
   assistantMessageId: string,
   promptText: string,
-  cwd: string | undefined,
   abortController: AbortController
 ): Promise<void> {
   const mapper = new EventMapper();
   let fullText = "";
 
-  // Look up session ID for conversation resumption
   const conversation = repository.getConversation(conversationId);
-  const workingDirectory = cwd || conversation?.cwd || process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
+  const workingDirectory = process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
 
   // Timeout to prevent runaway processes
   const timeoutId = setTimeout(() => {

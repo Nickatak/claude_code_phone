@@ -16,21 +16,26 @@ existing Claude Max subscription instead of paying for API access.
 
 ## Architecture
 
-Single server running on WSL, containerized via Docker Desktop.
+Two Proxmox VMs on a private lab subnet (`10.20.0.0/24`):
+
+- **dock01** (`10.20.0.110`) — runs the app container. Single Docker host.
+- **pg01** (`10.20.0.120`) — runs Postgres 17. Lab-subnet only, no public exposure.
 
 ```
 Phone (browser, PWA)
   |  HTTPS over Tailscale
   v
-Docker on WSL (serves UI + manages SDK child processes)
-  |  spawns
-  v
-Claude Code SDK (child process, access to ~ via volume mount)
+dock01: app container (serves UI + manages SDK child processes)
+  |  spawns                     |  Postgres connection
+  v                             v
+Claude Code SDK              pg01: Postgres 17
+(child process, host fs       (pocket_claude DB,
+ via volume mounts)            owned by pocket_claude_app role)
 ```
 
-There is no relay. There is no separate worker. The PC serves the frontend,
-handles requests, and runs the SDK directly. Docker Desktop starts with Windows,
-the container restarts unless stopped. The service is available whenever the PC is on.
+There is no relay. There is no separate worker. dock01 serves the frontend,
+handles requests, runs the SDK, and persists state to pg01. Both VMs are
+restart-resilient (`unless-stopped` for the container, systemd for Postgres).
 
 ### Why not a relay?
 
@@ -122,41 +127,35 @@ standard HTTP patterns instead of a stateful protocol.
 
 ## Container Strategy
 
-Docker Desktop on Windows, container runs in WSL.
+`docker-compose.yml` is the prod stack on dock01: just the app, talking to
+external pg01 via `DATABASE_URL` in `.env`.
 
-```yaml
-# Conceptual - not final
-services:
-  pocket-claude:
-    build: .
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    volumes:
-      - /home/nick:/home/nick
-    environment:
-      - HOME=/home/nick
-```
+`docker-compose.dev.yml` is dev-only infrastructure: a local Postgres 17
+container for iteration. The two files never merge - each is `up`/`down`
+independently. Daily dev loop is `make db-up` then `make dev` (tsx watch
+on the host, connecting to the local dev DB).
 
 ### Why Docker?
 
-- Docker Desktop starts with Windows
-- `restart: unless-stopped` means the service survives WSL restarts, crashes, etc.
-- No manual process management, no systemd, no startup scripts
+- `restart: unless-stopped` means the service survives reboots and crashes
+- The Dockerfile copies `dist/` (built TypeScript) and `drizzle/` (migration
+  files) so the container is self-contained at runtime
+- No manual process management, no systemd unit files for the app
 
-### Volume mount
+### Volume mounts
 
-The SDK needs broad filesystem access (project files, ~/.claude, git repos, etc.).
-The entire home directory is mounted. This is the same attack surface as running
-Claude Code directly on WSL with bypass permissions - the mount doesn't introduce
-new risk, it just makes existing risk visible.
+The SDK needs broad filesystem access (project files, `~/.claude`, git repos).
+The relevant project directories and `~/.claude` are bind-mounted in. This is
+the same attack surface as running Claude Code directly on the host with
+bypass permissions - the container boundary doesn't change the surface.
 
 ### Image requirements
 
-- Node.js (SDK runtime)
-- Git (SDK needs it for repo operations)
-- Common CLI tools the SDK shells out to
-- Claude Code SDK (`@anthropic-ai/claude-code`)
+- Node.js (SDK runtime, currently `node:24-slim`)
+- Git, curl, jq, ripgrep (SDK shells out to these)
+- Claude Code CLI (`@anthropic-ai/claude-code`, installed globally)
+- App's `node_modules` from `npm install --omit=dev`
+- `drizzle/` migration files (so migrate-at-startup finds them)
 
 ## UI
 
@@ -181,13 +180,48 @@ Mobile-first PWA. Phone is the primary (and probably only) client.
 
 ## Data Model
 
-Carried forward from v1, adjusted as needed.
+Three tables in Postgres on pg01:
 
-- **Conversations**: id, title, created_at, last_active
-- **Messages**: id, conversation_id, role (user/assistant), content, tool_use metadata, created_at
-- **SDK Sessions**: conversation_id -> session_id mapping for resuming context
+- **conversations**: `id` (uuid), `title`, `session_id`, `cwd`, `status`
+  (`idle | running | stopped | error`), `created_at`, `updated_at`
+- **messages**: `id` (uuid), `conversation_id` (FK), `role`
+  (`user | assistant`), `content`, `created_at`
+- **tool_events**: `id` (serial), `conversation_id` (FK), `message_id` (FK,
+  nullable), `tool_name`, `tool_id`, `input`, `status`
+  (`running | complete | error`), `created_at`
 
-SQLite, same as v1. Single user, single machine, no need for anything heavier.
+SDK session resumption is the `conversations.session_id` column - the SDK
+returns a session ID on its first run, we store it, and pass it as `resume`
+on subsequent calls in the same conversation.
+
+### Migrations
+
+Drizzle ORM schema in `src/db/schema.ts`. SQL migrations live in `drizzle/`
+and are generated with `make db-generate` (which runs `drizzle-kit generate`).
+Migrations are applied at server startup via
+`drizzle-orm/node-postgres/migrator` - no separate migration step in
+deployment. Fail-on-startup is the right semantics for a single-instance
+service: if migrations don't apply, refusing to serve traffic is correct.
+
+### Why Postgres on a separate VM
+
+- Storage isolation: dock01 has limited disk; pg01's data volume is sized
+  for unbounded conversation growth
+- Engine choice: SQLite worked at v1 scale but lacks proper concurrent
+  writers, network access, and online backup tooling
+- Lab pattern: pg01 is meant to back multiple lab services over time -
+  this is the first
+
+### Connection model
+
+Single connection pool (`pg.Pool`) per app process. The pool is lazy - the
+first query opens a TCP connection. Process shutdown should `pool.end()`
+to drain in-flight work; not yet wired.
+
+`pg_hba.conf` on pg01 has a per-app rule:
+`host pocket_claude pocket_claude_app 10.20.0.110/32 scram-sha-256` -
+only dock01 can connect to this DB as this role. Adding new apps means
+adding new rules, not relaxing existing ones.
 
 ## Auth
 

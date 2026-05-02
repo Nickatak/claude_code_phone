@@ -1,5 +1,5 @@
 /**
- * Database schema for Remote Claude v2.
+ * Database schema for Pocket Claude v2.
  *
  * Single-user, no auth tables. Conversations and messages are the core
  * domain. Tool events are stored separately so durable execution works -

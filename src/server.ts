@@ -1,5 +1,5 @@
 /**
- * Remote Claude v2 - Express server entry point.
+ * Pocket Claude v2 - Express server entry point.
  *
  * Single server that serves the mobile PWA frontend, provides REST
  * endpoints for conversation management, and streams tool events via
@@ -34,5 +34,5 @@ app.get("/{*path}", (_req, res) => {
 getDb();
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Remote Claude listening on 0.0.0.0:${PORT}`);
+  console.log(`Pocket Claude listening on 0.0.0.0:${PORT}`);
 });

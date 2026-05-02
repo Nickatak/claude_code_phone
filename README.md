@@ -1,4 +1,4 @@
-# Remote Claude
+# Pocket Claude
 
 Mobile-first interface for Claude Code agents that runs the full Claude Code SDK
 from your phone over Tailscale. This provides the benefits of being able to use your existing CLAUDE.md config as well as your existing Claude Max subscription so there's no additional API costs.

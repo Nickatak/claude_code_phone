@@ -1,5 +1,5 @@
 {
-  "name": "remote-claude",
+  "name": "pocket-claude",
   "version": "2.0.0",
   "description": "Mobile interface for Claude Code - pipes prompts from phone into Claude Code SDK over Tailscale",
   "main": "dist/server.js",

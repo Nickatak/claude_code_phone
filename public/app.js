@@ -1,5 +1,5 @@
 /**
- * Remote Claude v2 - Frontend application.
+ * Pocket Claude v2 - Frontend application.
  *
  * Mobile-first chat UI that communicates with the server via REST + SSE.
  * No token streaming - tool calls appear as cards in real time, and the

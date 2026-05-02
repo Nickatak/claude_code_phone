@@ -1,4 +1,4 @@
-# Remote Claude v2 - Architecture
+# Pocket Claude v2 - Architecture
 
 ## Problem
 
@@ -127,7 +127,7 @@ Docker Desktop on Windows, container runs in WSL.
 ```yaml
 # Conceptual - not final
 services:
-  remote-claude:
+  pocket-claude:
     build: .
     restart: unless-stopped
     ports:

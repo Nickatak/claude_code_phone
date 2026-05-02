@@ -1,5 +1,5 @@
 services:
-  remote-claude:
+  pocket-claude:
     build: .
     restart: unless-stopped
     ports:
@@ -14,5 +14,5 @@ services:
     environment:
       - HOME=/home/nick
       - NODE_ENV=production
-      - DB_PATH=/app/data/remote-claude.db
+      - DB_PATH=/app/data/pocket-claude.db
       - DEFAULT_CWD=/home/nick/learning/social_media

@@ -5,7 +5,7 @@
 # ============================================================================
 
 help:
-	@echo "remote-claude - command reference"
+	@echo "pocket-claude - command reference"
 	@echo ""
 	@echo "Development"
 	@echo "  make dev               Run dev server (tsx watch, hot reload)"
@@ -49,7 +49,7 @@ docker-logs:
 	docker compose logs -f --tail=200
 
 docker-shell:
-	docker compose exec remote-claude sh
+	docker compose exec pocket-claude sh
 
 # ============================================================================
 # UTILITIES

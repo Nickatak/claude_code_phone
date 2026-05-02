@@ -15,9 +15,9 @@ import type { SSEEvent } from "../sse/types";
 export const conversationRouter = Router();
 
 /** List all conversations, most recent first. */
-conversationRouter.get("/", (_req, res) => {
+conversationRouter.get("/", async (_req, res) => {
   try {
-    const rows = repository.listConversations();
+    const rows = await repository.listConversations();
     res.json(rows);
   } catch (error) {
     console.error("Failed to list conversations:", error);
@@ -26,10 +26,10 @@ conversationRouter.get("/", (_req, res) => {
 });
 
 /** Get messages for a conversation. */
-conversationRouter.get("/:id/messages", (req, res) => {
+conversationRouter.get("/:id/messages", async (req, res) => {
   try {
     const conversationId = req.params.id as string;
-    const rows = repository.getMessages(conversationId);
+    const rows = await repository.getMessages(conversationId);
     res.json(rows);
   } catch (error) {
     console.error("Failed to get messages:", error);
@@ -38,10 +38,10 @@ conversationRouter.get("/:id/messages", (req, res) => {
 });
 
 /** Get tool events for a conversation. Used for catch-up after reconnect. */
-conversationRouter.get("/:id/tools", (req, res) => {
+conversationRouter.get("/:id/tools", async (req, res) => {
   try {
     const conversationId = req.params.id as string;
-    const rows = repository.getToolEvents(conversationId);
+    const rows = await repository.getToolEvents(conversationId);
     res.json(rows);
   } catch (error) {
     console.error("Failed to get tool events:", error);
@@ -82,12 +82,12 @@ conversationRouter.post("/:id/stop", (req, res) => {
 });
 
 /** Get conversation status (running, idle, etc.). */
-conversationRouter.get("/:id/status", (req, res) => {
+conversationRouter.get("/:id/status", async (req, res) => {
   const conversationId = req.params.id as string;
   const running = isRunning(conversationId);
 
   try {
-    const conversation = repository.getConversation(conversationId);
+    const conversation = await repository.getConversation(conversationId);
 
     if (!conversation) {
       res.status(404).json({ error: "Conversation not found" });

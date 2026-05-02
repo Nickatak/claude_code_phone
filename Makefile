@@ -1,4 +1,4 @@
-.PHONY: help dev build start stop restart logs clean sync-claude docker-up docker-down docker-logs docker-rebuild docker-shell
+.PHONY: help dev build start stop restart logs clean sync-claude docker-up docker-down docker-logs docker-rebuild docker-shell db-up db-down db-logs db-generate
 
 # ============================================================================
 # HELP
@@ -8,10 +8,14 @@ help:
 	@echo "pocket-claude - command reference"
 	@echo ""
 	@echo "Development"
+	@echo "  make db-up             Start local dev Postgres (docker)"
+	@echo "  make db-down           Stop local dev Postgres"
+	@echo "  make db-logs           Stream dev DB logs"
+	@echo "  make db-generate       Generate a migration from schema changes"
 	@echo "  make dev               Run dev server (tsx watch, hot reload)"
 	@echo "  make build             Build TypeScript to dist/"
 	@echo ""
-	@echo "Docker"
+	@echo "Docker (production stack)"
 	@echo "  make docker-up         Build and start container (detached)"
 	@echo "  make docker-down       Stop and remove container"
 	@echo "  make docker-rebuild    Force rebuild image and restart"
@@ -26,6 +30,18 @@ help:
 # DEVELOPMENT
 # ============================================================================
 
+db-up:
+	docker compose -f docker-compose.dev.yml up -d
+
+db-down:
+	docker compose -f docker-compose.dev.yml down
+
+db-logs:
+	docker compose -f docker-compose.dev.yml logs -f --tail=200
+
+db-generate:
+	npm run db:generate
+
 dev:
 	npm run dev
 
@@ -33,7 +49,7 @@ build:
 	npm run build
 
 # ============================================================================
-# DOCKER
+# DOCKER (production stack on dock01: hits pg01)
 # ============================================================================
 
 docker-up: build

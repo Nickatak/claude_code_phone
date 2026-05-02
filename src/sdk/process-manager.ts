@@ -70,16 +70,16 @@ export async function runPrompt(
   const workingDirectory = process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
   if (!conversationId) {
     conversationId = randomUUID();
-    repository.createConversation(conversationId, workingDirectory);
+    await repository.createConversation(conversationId, workingDirectory);
   } else {
     if (activeProcesses.has(conversationId)) {
       throw new Error("Conversation already has an active prompt");
     }
-    repository.updateConversationStatus(conversationId, "running");
+    await repository.updateConversationStatus(conversationId, "running");
   }
 
   const userMessageId = randomUUID();
-  repository.insertMessage(userMessageId, conversationId, "user", promptText);
+  await repository.insertMessage(userMessageId, conversationId, "user", promptText);
 
   const assistantMessageId = randomUUID();
   const abortController = new AbortController();
@@ -112,7 +112,7 @@ async function executePrompt(
   const mapper = new EventMapper();
   let fullText = "";
 
-  const conversation = repository.getConversation(conversationId);
+  const conversation = await repository.getConversation(conversationId);
   const workingDirectory = process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
 
   // Timeout to prevent runaway processes
@@ -157,10 +157,10 @@ async function executePrompt(
         const mapped = mapper.map(sdkEvent);
         if (mapped) {
           if (mapped.type === "tool_start") {
-            repository.insertToolEvent(conversationId, mapped.toolName, mapped.toolId);
+            await repository.insertToolEvent(conversationId, mapped.toolName, mapped.toolId);
             emitter.emit(conversationId, mapped);
           } else if (mapped.type === "tool_complete") {
-            repository.completeToolEvent(mapped.toolId, mapped.input);
+            await repository.completeToolEvent(mapped.toolId, mapped.input);
             emitter.emit(conversationId, mapped);
           }
         }
@@ -169,10 +169,10 @@ async function executePrompt(
         const sessionId = resultEvent.session_id || conversation?.sessionId || "";
 
         // Store the complete assistant message
-        repository.insertMessage(assistantMessageId, conversationId, "assistant", fullText);
+        await repository.insertMessage(assistantMessageId, conversationId, "assistant", fullText);
 
         // Update conversation with session ID for future resumption
-        repository.updateConversationStatus(conversationId, "idle", sessionId);
+        await repository.updateConversationStatus(conversationId, "idle", sessionId);
 
         emitter.emit(conversationId, {
           type: "response_complete",
@@ -184,13 +184,13 @@ async function executePrompt(
   } catch (error) {
     // AbortController.abort() causes the SDK to throw - treat as a stop
     if (abortController.signal.aborted) {
-      repository.insertMessage(
+      await repository.insertMessage(
         assistantMessageId,
         conversationId,
         "assistant",
         fullText || "(stopped)"
       );
-      repository.updateConversationStatus(conversationId, "stopped");
+      await repository.updateConversationStatus(conversationId, "stopped");
       emitter.emit(conversationId, { type: "stopped" });
       return;
     }
@@ -198,13 +198,13 @@ async function executePrompt(
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     // Store error as assistant message so it's visible in history
-    repository.insertMessage(
+    await repository.insertMessage(
       assistantMessageId,
       conversationId,
       "assistant",
       `Error: ${errorMessage}`
     );
-    repository.updateConversationStatus(conversationId, "error");
+    await repository.updateConversationStatus(conversationId, "error");
     emitter.emit(conversationId, { type: "error", message: errorMessage });
   } finally {
     clearTimeout(timeoutId);

@@ -9,7 +9,7 @@
 
 import express from "express";
 import path from "path";
-import { getDb } from "./db/index";
+import { runMigrations } from "./db/index";
 import { conversationRouter } from "./routes/conversations";
 
 const PORT = parseInt(process.env.PORT || "9800", 10);
@@ -30,9 +30,14 @@ app.get("/{*path}", (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-// Initialize database on startup
-getDb();
+async function main() {
+  await runMigrations();
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Pocket Claude listening on 0.0.0.0:${PORT}`);
+  });
+}
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Pocket Claude listening on 0.0.0.0:${PORT}`);
+main().catch((err) => {
+  console.error("Startup failed:", err);
+  process.exit(1);
 });

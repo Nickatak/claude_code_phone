@@ -11,8 +11,9 @@ services:
       - /home/nick/.claude:/home/nick/.claude
       - /home/nick/.claude.json:/home/nick/.claude.json
       - ./config:/app/config:ro
+    env_file:
+      - .env
     environment:
       - HOME=/home/nick
       - NODE_ENV=production
-      - DB_PATH=/app/data/pocket-claude.db
       - DEFAULT_CWD=/home/nick/learning/social_media

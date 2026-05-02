@@ -7,112 +7,108 @@
  * of the app decoupled from the ORM.
  */
 
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "./index";
 import { conversations, messages, toolEvents } from "./schema";
 
 // -- Conversations --
 
-export function createConversation(id: string, cwd: string): void {
+export async function createConversation(id: string, cwd: string): Promise<void> {
   const db = getDb();
-  db.insert(conversations).values({
+  await db.insert(conversations).values({
     id,
     cwd,
     status: "running",
-  }).run();
+  });
 }
 
-export function getConversation(conversationId: string) {
+export async function getConversation(conversationId: string) {
   const db = getDb();
-  return db.select()
+  const rows = await db.select()
     .from(conversations)
     .where(eq(conversations.id, conversationId))
-    .get();
+    .limit(1);
+  return rows[0];
 }
 
-export function listConversations(limit = 50) {
+export async function listConversations(limit = 50) {
   const db = getDb();
   return db.select()
     .from(conversations)
     .orderBy(desc(conversations.updatedAt))
-    .limit(limit)
-    .all();
+    .limit(limit);
 }
 
-export function updateConversationStatus(
+export async function updateConversationStatus(
   conversationId: string,
   status: "idle" | "running" | "stopped" | "error",
   sessionId?: string
-): void {
+): Promise<void> {
   const db = getDb();
   const updates: Record<string, unknown> = {
     status,
-    updatedAt: new Date().toISOString(),
+    updatedAt: sql`now()`,
   };
   if (sessionId !== undefined) {
     updates.sessionId = sessionId;
   }
-  db.update(conversations)
+  await db.update(conversations)
     .set(updates)
-    .where(eq(conversations.id, conversationId))
-    .run();
+    .where(eq(conversations.id, conversationId));
 }
 
 // -- Messages --
 
-export function insertMessage(
+export async function insertMessage(
   id: string,
   conversationId: string,
   role: "user" | "assistant",
   content: string
-): void {
+): Promise<void> {
   const db = getDb();
-  db.insert(messages).values({
+  await db.insert(messages).values({
     id,
     conversationId,
     role,
     content,
-  }).run();
+  });
 }
 
-export function getMessages(conversationId: string) {
+export async function getMessages(conversationId: string) {
   const db = getDb();
   return db.select()
     .from(messages)
     .where(eq(messages.conversationId, conversationId))
-    .orderBy(messages.createdAt)
-    .all();
+    .orderBy(messages.createdAt);
 }
 
 // -- Tool events --
 
-export function insertToolEvent(
+export async function insertToolEvent(
   conversationId: string,
   toolName: string,
   toolId: string
-): void {
+): Promise<void> {
   const db = getDb();
-  db.insert(toolEvents).values({
+  await db.insert(toolEvents).values({
     conversationId,
     toolName,
     toolId,
     status: "running",
-  }).run();
+  });
 }
 
-export function completeToolEvent(toolId: string, input: string): void {
+export async function completeToolEvent(toolId: string, input: string): Promise<void> {
   const db = getDb();
-  db.update(toolEvents)
+  await db.update(toolEvents)
     .set({ input, status: "complete" })
-    .where(eq(toolEvents.toolId, toolId))
-    .run();
+    .where(eq(toolEvents.toolId, toolId));
 }
 
-export function getToolEvents(conversationId: string) {
+export async function getToolEvents(conversationId: string) {
   const db = getDb();
   return db.select()
     .from(toolEvents)
     .where(eq(toolEvents.conversationId, conversationId))
-    .orderBy(toolEvents.createdAt)
-    .all();
+    .orderBy(toolEvents.createdAt);
 }

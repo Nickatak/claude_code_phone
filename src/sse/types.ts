@@ -1,41 +1,34 @@
 /**
  * SSE event types pushed to connected clients.
  *
- * These define the protocol between the server and the mobile frontend.
- * Tool events stream in real time, the final response arrives as one
- * complete message, and errors/stops are signaled immediately.
+ * Tool events stream as they happen, each tagged with the assistant
+ * message they belong to. The assistant message itself emits exactly
+ * one terminal event - message_transition - whose `status` field
+ * encodes whether it completed, was stopped, or errored.
  */
 
 export interface ToolStartEvent {
   type: "tool_start";
+  messageId: string;
   toolName: string;
   toolId: string;
 }
 
 export interface ToolCompleteEvent {
   type: "tool_complete";
+  messageId: string;
   toolId: string;
   input: string;
 }
 
-export interface ResponseCompleteEvent {
-  type: "response_complete";
+export interface MessageTransitionEvent {
+  type: "message_transition";
   messageId: string;
+  status: "complete" | "stopped" | "error";
   content: string;
-}
-
-export interface ErrorEvent {
-  type: "error";
-  message: string;
-}
-
-export interface StoppedEvent {
-  type: "stopped";
 }
 
 export type SSEEvent =
   | ToolStartEvent
   | ToolCompleteEvent
-  | ResponseCompleteEvent
-  | ErrorEvent
-  | StoppedEvent;
+  | MessageTransitionEvent;

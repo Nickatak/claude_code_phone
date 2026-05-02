@@ -13,7 +13,20 @@
  * across turns.
  */
 
-import type { ToolStartEvent, ToolCompleteEvent } from "../sse/types";
+/** Simplified tool lifecycle events extracted from raw SDK stream events. */
+export interface MappedToolStart {
+  type: "tool_start";
+  toolName: string;
+  toolId: string;
+}
+
+export interface MappedToolComplete {
+  type: "tool_complete";
+  toolId: string;
+  input: string;
+}
+
+export type MappedSDKEvent = MappedToolStart | MappedToolComplete;
 
 /** In-flight tool call being accumulated from streaming deltas. */
 interface ActiveTool {
@@ -30,9 +43,9 @@ export class EventMapper {
 
   /**
    * Process a single SDK stream event and return a simplified event if
-   * the frontend should know about it, or null to skip.
+   * the caller should know about it, or null to skip.
    */
-  map(sdkEvent: any): ToolStartEvent | ToolCompleteEvent | null {
+  map(sdkEvent: any): MappedSDKEvent | null {
     if (!sdkEvent || !sdkEvent.type) return null;
 
     // Tool call starting
@@ -72,7 +85,7 @@ export class EventMapper {
       const blockIndex = String(sdkEvent.index);
       const tool = this.activeTools.get(blockIndex);
       if (tool) {
-        const event: ToolCompleteEvent = {
+        const event: MappedToolComplete = {
           type: "tool_complete",
           toolId: tool.toolId,
           input: tool.input,

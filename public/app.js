@@ -2,15 +2,18 @@
  * Pocket Claude v2 - Frontend application.
  *
  * Mobile-first chat UI that communicates with the server via REST + SSE.
- * No token streaming - tool calls appear as cards in real time, and the
- * final response renders once as a complete message.
+ * Each assistant message has an explicit status (running | complete |
+ * stopped | error) and the bubble's presentation tracks that status -
+ * a running bubble shows animated dots, a terminal bubble shows content.
+ *
+ * No token streaming. Tool cards stream live, but the assistant's text
+ * appears once at terminal - never partial.
  */
 
 // -- State --
 
 let currentConversationId = null;
 let eventSource = null;
-let isProcessing = false;
 
 // -- DOM refs --
 
@@ -42,8 +45,8 @@ async function api(path, options = {}) {
 
 /**
  * Connect to the SSE stream for a conversation. Receives tool events
- * and the final response in real time. If the connection drops, the
- * client can catch up via REST - no data is lost.
+ * and the message terminal transition as they happen. If the
+ * connection drops, the client can catch up via REST - no data is lost.
  */
 function connectSSE(conversationId) {
   disconnectSSE();
@@ -55,29 +58,15 @@ function connectSSE(conversationId) {
 
     switch (data.type) {
       case "tool_start":
-        addToolCard(data.toolId, data.toolName);
+        addToolCard(data.messageId, data.toolId, data.toolName);
         break;
 
       case "tool_complete":
         completeToolCard(data.toolId, data.input);
         break;
 
-      case "response_complete":
-        removeThinking();
-        addMessage("assistant", data.content);
-        setProcessing(false);
-        break;
-
-      case "error":
-        removeThinking();
-        addMessage("assistant", `Error: ${data.message}`);
-        setProcessing(false);
-        break;
-
-      case "stopped":
-        removeThinking();
-        addMessage("assistant", "(stopped)");
-        setProcessing(false);
+      case "message_transition":
+        applyTerminal(data.messageId, data.status, data.content);
         break;
 
       case "connected":
@@ -86,8 +75,8 @@ function connectSSE(conversationId) {
   };
 
   eventSource.onerror = () => {
-    // SSE will auto-reconnect. If the server is down, the connection
-    // will keep retrying. No special handling needed.
+    // SSE auto-reconnects. Server-down state surfaces as the running
+    // bubble staying as a placeholder until the connection comes back.
   };
 }
 
@@ -100,23 +89,59 @@ function disconnectSSE() {
 
 // -- Message rendering --
 
-/** Add a chat message to the UI. */
-function addMessage(role, content) {
+/**
+ * Render a message row from the server. Branches on role and status
+ * so the same function handles every flavor of bubble:
+ *   - user: always terminal, just renders content
+ *   - assistant running: placeholder bubble with dots
+ *   - assistant terminal: bubble with content (markdown-rendered)
+ */
+function renderMessage(msg) {
   const div = document.createElement("div");
-  div.className = `message ${role}`;
+  div.className = `message ${msg.role}`;
+  div.dataset.messageId = msg.id;
 
-  if (role === "assistant") {
-    div.innerHTML = marked.parse(content || "");
+  if (msg.role === "user") {
+    div.textContent = msg.content || "";
+  } else if (msg.status === "running") {
+    div.classList.add("running");
+    div.innerHTML = '<span class="thinking-dots"></span>';
   } else {
-    div.textContent = content;
+    div.classList.add(msg.status);
+    div.innerHTML = marked.parse(msg.content || "");
   }
 
   messagesContainer.appendChild(div);
   scrollToBottom();
+  return div;
 }
 
-/** Add a tool card that shows a tool call in progress. */
-function addToolCard(toolId, toolName) {
+/**
+ * Find a running assistant bubble by id and replace its placeholder
+ * with terminal content. Idempotent: if the bubble is already
+ * terminal, this is a no-op (handles SSE replays).
+ */
+function applyTerminal(messageId, status, content) {
+  const bubble = messagesContainer.querySelector(
+    `.message.assistant[data-message-id="${cssEscape(messageId)}"]`
+  );
+  if (!bubble) return;
+  if (!bubble.classList.contains("running")) return;
+
+  bubble.classList.remove("running");
+  bubble.classList.add(status);
+  bubble.innerHTML = marked.parse(content || "");
+  scrollToBottom();
+}
+
+/**
+ * Add a tool card. Tools are children of an assistant message - we
+ * insert the card before the parent bubble so it appears chronologically
+ * (between the user prompt and the assistant response).
+ */
+function addToolCard(messageId, toolId, toolName) {
+  if (document.getElementById(`tool-${toolId}`)) return;
+
   const card = document.createElement("div");
   card.className = "tool-card running";
   card.id = `tool-${toolId}`;
@@ -129,22 +154,22 @@ function addToolCard(toolId, toolName) {
     <div class="tool-detail"></div>
   `;
 
-  // Toggle detail on tap
   card.addEventListener("click", () => {
     card.classList.toggle("expanded");
   });
 
-  // Insert before the thinking indicator so it stays at the bottom
-  const thinking = document.getElementById("thinking-indicator");
-  if (thinking) {
-    messagesContainer.insertBefore(card, thinking);
+  const parentBubble = messagesContainer.querySelector(
+    `.message.assistant[data-message-id="${cssEscape(messageId)}"]`
+  );
+  if (parentBubble) {
+    messagesContainer.insertBefore(card, parentBubble);
   } else {
     messagesContainer.appendChild(card);
   }
   scrollToBottom();
 }
 
-/** Mark a tool card as complete and populate its detail. */
+/** Mark an existing tool card as complete and populate its detail. */
 function completeToolCard(toolId, input) {
   const card = document.getElementById(`tool-${toolId}`);
   if (!card) return;
@@ -153,7 +178,6 @@ function completeToolCard(toolId, input) {
   const statusEl = card.querySelector(".tool-status");
   if (statusEl) statusEl.textContent = "done";
 
-  // Parse and display the tool input as readable detail
   const detailEl = card.querySelector(".tool-detail");
   if (detailEl && input) {
     try {
@@ -172,56 +196,69 @@ function completeToolCard(toolId, input) {
  */
 function formatToolInput(input) {
   if (typeof input !== "object" || input === null) return String(input);
-
-  // Common patterns: show the most useful field
   if (input.file_path) return input.file_path;
   if (input.command) return input.command;
   if (input.pattern) return input.pattern;
   if (input.query) return input.query;
   if (input.url) return input.url;
-
   return JSON.stringify(input, null, 2);
-}
-
-/** Show the thinking indicator. */
-function showThinking() {
-  removeThinking();
-  const div = document.createElement("div");
-  div.className = "thinking";
-  div.id = "thinking-indicator";
-  div.innerHTML = 'Thinking<span class="thinking-dots"></span>';
-  messagesContainer.appendChild(div);
-  scrollToBottom();
-}
-
-/** Remove the thinking indicator. */
-function removeThinking() {
-  const indicator = document.getElementById("thinking-indicator");
-  if (indicator) indicator.remove();
 }
 
 // -- Processing state --
 
-/** Toggle between send and stop buttons, enable/disable input. */
-function setProcessing(processing) {
-  isProcessing = processing;
+/**
+ * Send/stop button visibility derives from "is the latest assistant
+ * message running?" rather than being toggled imperatively.
+ */
+function syncProcessingButtons() {
+  const runningBubble = messagesContainer.querySelector(".message.assistant.running");
+  const processing = runningBubble !== null;
   sendBtn.style.display = processing ? "none" : "flex";
   stopBtn.style.display = processing ? "flex" : "none";
   sendBtn.disabled = processing;
+}
+
+// -- State sync --
+
+/**
+ * Pull the full conversation state from the server and render it.
+ * Used by both reconnect (loading a conversation from history) and
+ * post-POST (covering the race where the SDK already finished by the
+ * time we subscribe to SSE).
+ */
+async function syncConversationState() {
+  if (!currentConversationId) return;
+
+  messagesContainer.innerHTML = "";
+
+  const msgs = await api(`/conversations/${currentConversationId}/messages`);
+  for (const msg of msgs) {
+    renderMessage(msg);
+  }
+
+  const tools = await api(`/conversations/${currentConversationId}/tools`);
+  for (const tool of tools) {
+    addToolCard(tool.messageId, tool.toolId, tool.toolName);
+    if (tool.status !== "running") {
+      completeToolCard(tool.toolId, tool.input);
+    }
+  }
+
+  syncProcessingButtons();
 }
 
 // -- Send / stop --
 
 async function sendMessage() {
   const text = promptInput.value.trim();
-  if (!text || isProcessing) return;
+  if (!text) return;
+
+  // Don't allow concurrent sends
+  if (messagesContainer.querySelector(".message.assistant.running")) return;
 
   promptInput.value = "";
   sessionStorage.removeItem("rc_draft");
   autoResize();
-  addMessage("user", text);
-  showThinking();
-  setProcessing(true);
 
   try {
     const endpoint = currentConversationId || "new";
@@ -230,16 +267,26 @@ async function sendMessage() {
       body: JSON.stringify({ message: text }),
     });
 
-    // If this was a new conversation, store the ID and connect SSE
     if (!currentConversationId) {
       currentConversationId = result.conversationId;
       localStorage.setItem("rc_conversation_id", currentConversationId);
-      connectSSE(currentConversationId);
     }
+
+    // Sync state from server (covers fast-SDK race where the message
+    // already terminal-transitioned before we subscribe to SSE) and
+    // then attach the live event stream.
+    await syncConversationState();
+    connectSSE(currentConversationId);
   } catch (error) {
-    removeThinking();
-    addMessage("assistant", `Error: ${error.message}`);
-    setProcessing(false);
+    // Render the failure as an inline assistant bubble so it lands in
+    // the conversation flow rather than a popup.
+    renderMessage({
+      id: crypto.randomUUID(),
+      role: "assistant",
+      status: "error",
+      content: `Error: ${error.message}`,
+    });
+    syncProcessingButtons();
   }
 }
 
@@ -286,37 +333,20 @@ async function loadConversations() {
 async function openConversation(conversationId) {
   currentConversationId = conversationId;
   localStorage.setItem("rc_conversation_id", conversationId);
-  messagesContainer.innerHTML = "";
   closeSidebar();
   disconnectSSE();
-  setProcessing(false);
 
   try {
-    // Load message history
-    const msgs = await api(`/conversations/${conversationId}/messages`);
-    for (const msg of msgs) {
-      addMessage(msg.role, msg.content);
-    }
-
-    const status = await api(`/conversations/${conversationId}/status`);
-    if (status.status === "running") {
-      showThinking();
-      setProcessing(true);
-
-      // Load any tool events that happened while we were away
-      const tools = await api(`/conversations/${conversationId}/tools`);
-      for (const tool of tools) {
-        addToolCard(tool.toolId, tool.toolName);
-        if (tool.status === "complete") {
-          completeToolCard(tool.toolId, tool.input);
-        }
-      }
-    }
-
+    await syncConversationState();
     connectSSE(conversationId);
   } catch (error) {
     console.error("Failed to open conversation:", error);
-    addMessage("assistant", `Error loading conversation: ${error.message}`);
+    renderMessage({
+      id: crypto.randomUUID(),
+      role: "assistant",
+      status: "error",
+      content: `Error loading conversation: ${error.message}`,
+    });
   }
 }
 
@@ -325,7 +355,7 @@ function startNewChat() {
   localStorage.removeItem("rc_conversation_id");
   messagesContainer.innerHTML = "";
   disconnectSSE();
-  setProcessing(false);
+  syncProcessingButtons();
   promptInput.focus();
 }
 
@@ -352,7 +382,12 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-/** Auto-resize textarea to fit content. */
+/** CSS.escape polyfill-ish for use inside querySelector strings. */
+function cssEscape(str) {
+  if (window.CSS && CSS.escape) return CSS.escape(str);
+  return String(str).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
 function autoResize() {
   promptInput.style.height = "auto";
   promptInput.style.height = Math.min(promptInput.scrollHeight, 120) + "px";
@@ -381,15 +416,15 @@ promptInput.addEventListener("keydown", (event) => {
 
 // -- Init --
 
-// Restore draft if the app was backgrounded
 const savedDraft = sessionStorage.getItem("rc_draft");
 if (savedDraft) {
   promptInput.value = savedDraft;
   autoResize();
 }
 
-// If we had a conversation open, reconnect to it
 const savedConversationId = localStorage.getItem("rc_conversation_id");
 if (savedConversationId) {
   openConversation(savedConversationId);
+} else {
+  syncProcessingButtons();
 }

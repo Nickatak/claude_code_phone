@@ -182,6 +182,18 @@ html, body {
   border-bottom-left-radius: 4px;
 }
 
+/* Running placeholder: bubble exists from creation, dots animate inside it */
+.message.assistant.running {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.message.assistant.error {
+  color: var(--text-dim);
+  border-left: 3px solid #c44;
+  padding-left: 11px;
+}
+
 /* --- Markdown in assistant messages --- */
 
 .message.assistant p { margin: 0.4em 0; }

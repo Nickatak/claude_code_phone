@@ -72,7 +72,12 @@ export class MessageSession {
       toolId,
       status: "running",
     });
-    emitter.emit(this.conversationId, { type: "tool_start", toolName, toolId });
+    emitter.emit(this.conversationId, {
+      type: "tool_start",
+      messageId: this.id,
+      toolName,
+      toolId,
+    });
   }
 
   /** Record that a tool completed. Updates the tool_event row by toolId. */
@@ -84,7 +89,12 @@ export class MessageSession {
         eq(toolEvents.toolId, toolId),
         eq(toolEvents.messageId, this.id),
       ));
-    emitter.emit(this.conversationId, { type: "tool_complete", toolId, input });
+    emitter.emit(this.conversationId, {
+      type: "tool_complete",
+      messageId: this.id,
+      toolId,
+      input,
+    });
   }
 
   /**
@@ -97,11 +107,6 @@ export class MessageSession {
     await getDb().update(conversations)
       .set({ status: "idle", sessionId })
       .where(eq(conversations.id, this.conversationId));
-    emitter.emit(this.conversationId, {
-      type: "response_complete",
-      messageId: this.id,
-      content: this.content,
-    });
   }
 
   /**
@@ -114,7 +119,6 @@ export class MessageSession {
     await getDb().update(conversations)
       .set({ status: "stopped" })
       .where(eq(conversations.id, this.conversationId));
-    emitter.emit(this.conversationId, { type: "stopped" });
   }
 
   /** Terminal: SDK threw. The error message becomes the message content. */
@@ -124,7 +128,6 @@ export class MessageSession {
     await getDb().update(conversations)
       .set({ status: "error" })
       .where(eq(conversations.id, this.conversationId));
-    emitter.emit(this.conversationId, { type: "error", message });
   }
 
   private async transitionTerminal(
@@ -140,6 +143,12 @@ export class MessageSession {
     await getDb().update(messages)
       .set({ status: to, content: finalContent })
       .where(eq(messages.id, this.id));
+    emitter.emit(this.conversationId, {
+      type: "message_transition",
+      messageId: this.id,
+      status: to,
+      content: finalContent,
+    });
   }
 
   private assertRunning(method: string): void {

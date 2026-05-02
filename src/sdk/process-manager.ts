@@ -3,8 +3,8 @@
  *
  * Each prompt spawns one SDK query. The process manager tracks active
  * processes so they can be stopped on demand and orchestrates the flow
- * between the SDK, the database (via repository), and connected clients
- * (via SSE emitter).
+ * between the SDK and a MessageSession (which owns the assistant
+ * message lifecycle, DB writes, and SSE emission).
  *
  * Only one prompt runs at a time per conversation. If a conversation
  * already has an active process, new prompts are rejected.
@@ -15,8 +15,8 @@ import fs from "fs";
 import path from "path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import * as repository from "../db/repository";
-import * as emitter from "../sse/emitter";
 import { EventMapper } from "./event-mapper";
+import { MessageSession } from "./message-session";
 
 const PROMPT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -33,8 +33,7 @@ const PHONE_CLAUDE_MD = fs.readFileSync(
 
 /** Internal tracking for active SDK processes. */
 interface ActiveProcess {
-  conversationId: string;
-  messageId: string;
+  session: MessageSession;
   abortController: AbortController;
 }
 
@@ -46,7 +45,7 @@ export function isRunning(conversationId: string): boolean {
   return activeProcesses.has(conversationId);
 }
 
-/** Stop an active SDK process. The SDK handles cleanup via AbortController. */
+/** Stop an active SDK process. The catch path in executePrompt drives the message terminal. */
 export function stop(conversationId: string): boolean {
   const active = activeProcesses.get(conversationId);
   if (!active) return false;
@@ -58,10 +57,10 @@ export function stop(conversationId: string): boolean {
 /**
  * Run a prompt through the Claude Code SDK.
  *
- * Creates the conversation and user message in the DB, spawns the SDK,
- * streams tool events to SSE listeners, and writes the final response
- * to the DB when complete. The client does not need to be connected
- * for any of this to work.
+ * Inserts the user message, creates a MessageSession for the assistant
+ * response, and spawns the SDK iteration in the background. The client
+ * does not need to be connected for any of this to work - the message
+ * lifecycle persists independently.
  */
 export async function runPrompt(
   conversationId: string | undefined,
@@ -79,38 +78,33 @@ export async function runPrompt(
   }
 
   const userMessageId = randomUUID();
-  await repository.insertMessage(userMessageId, conversationId, "user", promptText);
+  await repository.insertUserMessage(userMessageId, conversationId, promptText);
 
-  const assistantMessageId = randomUUID();
+  const session = await MessageSession.create(conversationId);
   const abortController = new AbortController();
 
-  activeProcesses.set(conversationId, {
-    conversationId,
-    messageId: assistantMessageId,
-    abortController,
-  });
+  activeProcesses.set(conversationId, { session, abortController });
 
   const convId = conversationId;
-  executePrompt(convId, assistantMessageId, promptText, abortController)
+  executePrompt(convId, session, promptText, abortController)
     .catch((error) => {
       console.error(`SDK execution error for ${convId}:`, error);
     });
 
-  return { conversationId: convId, messageId: assistantMessageId };
+  return { conversationId: convId, messageId: session.id };
 }
 
 /**
- * Internal: runs the SDK query, processes events, writes to DB.
- * This is the long-running async operation that the stop command can abort.
+ * Internal: drive the SDK iterator, route events into the MessageSession.
+ * The session owns DB writes and SSE emission - this function is just wiring.
  */
 async function executePrompt(
   conversationId: string,
-  assistantMessageId: string,
+  session: MessageSession,
   promptText: string,
   abortController: AbortController
 ): Promise<void> {
   const mapper = new EventMapper();
-  let fullText = "";
 
   const conversation = await repository.getConversation(conversationId);
   const workingDirectory = process.env.DEFAULT_CWD || "/home/nick/learning/social_media";
@@ -138,74 +132,39 @@ async function executePrompt(
       options.resume = conversation.sessionId;
     }
 
-    const session = query({ prompt: promptText, options });
+    const sdkSession = query({ prompt: promptText, options });
 
-    for await (const event of session) {
-      // Accumulate text from text deltas (we don't stream these to client)
+    for await (const event of sdkSession) {
       if (event.type === "stream_event") {
         const sdkEvent = (event as any).event;
 
-        // Accumulate text silently
         if (
           sdkEvent?.type === "content_block_delta" &&
           sdkEvent.delta?.type === "text_delta"
         ) {
-          fullText += sdkEvent.delta.text;
+          session.appendContent(sdkEvent.delta.text);
         }
 
-        // Map tool events and emit + persist
         const mapped = mapper.map(sdkEvent);
         if (mapped) {
           if (mapped.type === "tool_start") {
-            await repository.insertToolEvent(conversationId, mapped.toolName, mapped.toolId);
-            emitter.emit(conversationId, mapped);
+            await session.toolStarted(mapped.toolName, mapped.toolId);
           } else if (mapped.type === "tool_complete") {
-            await repository.completeToolEvent(mapped.toolId, mapped.input);
-            emitter.emit(conversationId, mapped);
+            await session.toolCompleted(mapped.toolId, mapped.input);
           }
         }
       } else if (event.type === "result") {
         const resultEvent = event as any;
         const sessionId = resultEvent.session_id || conversation?.sessionId || "";
-
-        // Store the complete assistant message
-        await repository.insertMessage(assistantMessageId, conversationId, "assistant", fullText);
-
-        // Update conversation with session ID for future resumption
-        await repository.updateConversationStatus(conversationId, "idle", sessionId);
-
-        emitter.emit(conversationId, {
-          type: "response_complete",
-          messageId: assistantMessageId,
-          content: fullText,
-        });
+        await session.complete(sessionId);
       }
     }
   } catch (error) {
-    // AbortController.abort() causes the SDK to throw - treat as a stop
     if (abortController.signal.aborted) {
-      await repository.insertMessage(
-        assistantMessageId,
-        conversationId,
-        "assistant",
-        fullText || "(stopped)"
-      );
-      await repository.updateConversationStatus(conversationId, "stopped");
-      emitter.emit(conversationId, { type: "stopped" });
+      await session.stop();
       return;
     }
-
-    const errorMessage = error instanceof Error ? error.message : String(error);
-
-    // Store error as assistant message so it's visible in history
-    await repository.insertMessage(
-      assistantMessageId,
-      conversationId,
-      "assistant",
-      `Error: ${errorMessage}`
-    );
-    await repository.updateConversationStatus(conversationId, "error");
-    emitter.emit(conversationId, { type: "error", message: errorMessage });
+    await session.fail(error instanceof Error ? error : new Error(String(error)));
   } finally {
     clearTimeout(timeoutId);
     activeProcesses.delete(conversationId);

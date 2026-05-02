@@ -58,18 +58,21 @@ export async function updateConversationStatus(
 }
 
 // -- Messages --
+//
+// Assistant message writes happen inside MessageSession (full lifecycle).
+// User messages are atomic (no lifecycle), so they go through here.
 
-export async function insertMessage(
+export async function insertUserMessage(
   id: string,
   conversationId: string,
-  role: "user" | "assistant",
-  content: string
+  content: string,
 ): Promise<void> {
   const db = getDb();
   await db.insert(messages).values({
     id,
     conversationId,
-    role,
+    role: "user",
+    status: "complete",
     content,
   });
 }
@@ -83,27 +86,10 @@ export async function getMessages(conversationId: string) {
 }
 
 // -- Tool events --
-
-export async function insertToolEvent(
-  conversationId: string,
-  toolName: string,
-  toolId: string
-): Promise<void> {
-  const db = getDb();
-  await db.insert(toolEvents).values({
-    conversationId,
-    toolName,
-    toolId,
-    status: "running",
-  });
-}
-
-export async function completeToolEvent(toolId: string, input: string): Promise<void> {
-  const db = getDb();
-  await db.update(toolEvents)
-    .set({ input, status: "complete" })
-    .where(eq(toolEvents.toolId, toolId));
-}
+//
+// Tool event writes happen inside MessageSession (each event belongs to
+// exactly one assistant message and shares its lifecycle). Reads stay
+// here for REST catch-up.
 
 export async function getToolEvents(conversationId: string) {
   const db = getDb();

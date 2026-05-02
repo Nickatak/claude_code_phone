@@ -22,7 +22,10 @@ export const messages = pgTable("messages", {
   id: uuid("id").primaryKey(),
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id),
   role: text("role", { enum: ["user", "assistant"] }).notNull(),
-  content: text("content").notNull(),
+  status: text("status", {
+    enum: ["running", "complete", "stopped", "error"],
+  }).notNull().default("running"),
+  content: text("content"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -33,7 +36,7 @@ export const messages = pgTable("messages", {
 export const toolEvents = pgTable("tool_events", {
   id: serial("id").primaryKey(),
   conversationId: uuid("conversation_id").notNull().references(() => conversations.id),
-  messageId: uuid("message_id").references(() => messages.id),
+  messageId: uuid("message_id").notNull().references(() => messages.id),
   toolName: text("tool_name").notNull(),
   toolId: text("tool_id").notNull(),
   input: text("input"),

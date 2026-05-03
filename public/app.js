@@ -415,6 +415,17 @@ promptInput.addEventListener("keydown", (event) => {
   }
 });
 
+// Re-sync when the page becomes visible. Mobile PWAs (and Chrome under
+// memory pressure) suspend backgrounded tabs, killing the SSE connection.
+// If a message_transition fires while we're suspended, the in-memory SSE
+// emitter drops it - so on resume, pull authoritative state from the DB.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (!currentConversationId) return;
+  if (!messagesContainer.querySelector(".message.assistant.running")) return;
+  syncConversationState();
+});
+
 // -- Init --
 
 const savedDraft = sessionStorage.getItem("rc_draft");

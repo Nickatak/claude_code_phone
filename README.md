@@ -1,62 +1,108 @@
 # Pocket Claude
 
-Mobile-first interface for Claude Code agents that runs the full Claude Code SDK
-from your phone over Tailscale. This provides the benefits of being able to use your existing CLAUDE.md config as well as your existing Claude Max subscription so there's no additional API costs.
+Mobile-first interface for Claude Code that pipes prompts from your phone into
+the Claude Code SDK over Tailscale. Uses your existing Claude Max subscription
+(no API costs) and your CLAUDE.md config, so your phone gets the same Claude
+harness your terminal does.
 
 ## What it does
 
 - Spawns and manages Claude Code SDK agent sessions from a phone
-- Durable execution - the server owns the agent from prompt to completion.
-  Disconnect mid-run, reconnect later, pick up where it left off.
+- Durable execution: the server owns the agent from prompt to terminal.
+  Disconnect mid-run, reconnect later, the result lands in the DB and the
+  phone catches up via REST.
 - Real-time tool activity via SSE - tool cards show what the agent is doing
   (file reads, bash commands, searches) as it works
-- Conversation persistence with session resumption across prompts
-- Phone-specific CLAUDE.md injection - patches your global config for the
-  mobile/container context (delivery rules, networking, share link handling)
+- Per-message FSM (running → complete | stopped | error) - no partial-text
+  rendering, no race-prone in-flight state
+- Conversation persistence with SDK session resumption across prompts
+- Phone-tuned system prompt - `make sync-claude` pulls your Claude Code
+  output style (`~/.claude/output-styles/personal.md`), patches container
+  bits (passthrough host, etc.), appends mobile overrides from
+  `config/phone-additions.md`, and the result rides every SDK call as
+  `systemPrompt.append`. Your behavior contract carries over from desktop;
+  fields whose value depends on you being at a keyboard get re-specified.
 - Stop/abort running agents on demand
 
 ## Why not claude.ai?
 
-Claude.AI has no persistent memory (it has a summarized list of about 30 things long or so, but no actual "hard memory").  Claude Code has a global config, as well as project-specific memory that can be applied to each prompt.  Both of these things together make it vastly more configurable and significantly more performant if your config is accurate.
+Claude.ai has no persistent memory across conversations - just an abbreviated
+profile of ~30 facts. Claude Code has a global `CLAUDE.md` and project-level
+memory that loads into every prompt. That's vastly more configurable and
+significantly more performant once your config is dialed in - and Pocket Claude
+lets you keep using it from your phone without paying for API access.
 
 ## Architecture
 
-Single Express server running on WSL inside Docker. Your phone connects directly over Tailscale, so no auth needed.
+Two-VM split:
 
-- SQLite (drizzle) for conversations, messages, and tool events
-- SSE for server-to-client push, REST for commands
-- PWA frontend with offline shell
+- **app host** (`dock01`) - serves the PWA, runs the Claude Code SDK as child
+  processes, talks to Postgres
+- **DB host** (`pg01`) - Postgres 17, lab-subnet only
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details.
+Phone connects to the app host directly over Tailscale, so no auth.
+
+- Postgres (drizzle ORM, migrations applied at startup)
+- SSE for server→client push, REST for commands and reconnect catch-up
+- Vanilla PWA frontend, no framework
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture.
 
 ## Prerequisites
 
-- Linux or WSL2 (if on Windows)
-- Docker
-- Tailscale (or any VPN/tunnel that gives your phone a route to the host)
-- Claude Max subscription with Claude Code installed
+- Linux host (any distribution; the author's `dock01` runs Debian 13)
+- Docker + docker compose
+- A Postgres 17 instance reachable from the app host. For development,
+  `docker-compose.dev.yml` brings up a local one.
+- Tailscale (or any VPN that gives your phone a route to the app host)
+- Claude Max subscription with Claude Code CLI authenticated on the host
+  (`claude auth login`)
 
-This was built for WSL2 + Docker Desktop on Windows. Native Linux works the same
-way. There are a few paths hardcoded to the author's home directory (`/home/nick`)
-in `docker-compose.yml`, `src/sdk/process-manager.ts`, and `public/app.js` - swap
-them for yours.
+This is the author's setup. Paths are hardcoded to `/home/nick` and the lab
+subnet `10.20.0.0/24` - swap them in `docker-compose.yml`, `.env`, and your
+Postgres host's `pg_hba.conf`. The app itself only cares about `DATABASE_URL`.
 
 ## Usage
 
+### Local development
+
 ```bash
-# First time - sync phone CLAUDE.md from your global
+# One time: bring up a local Postgres (persists in a named volume)
+make db-up
+
+# Rebuild the phone system prompt from your output style + mobile overrides
+# (re-run after editing ~/.claude/output-styles/personal.md or config/phone-additions.md)
 make sync-claude
 
-# Build and start (Docker)
-make docker-up
-
-# Rebuild after changes
-make docker-rebuild
-
-# Development (hot reload, no Docker)
+# Run the dev server with hot reload, pointed at the local dev DB
 npm install
 make dev
 ```
+
+Local `.env` needs `DATABASE_URL` pointed at the dev DB - see
+`docker-compose.dev.yml` for the credentials and port.
+
+### Database changes
+
+When you edit `src/db/schema.ts`:
+
+```bash
+make db-generate    # generates a new SQL migration in drizzle/
+```
+
+Migrations apply automatically at server startup - no separate migrate step in
+the deploy.
+
+### Production deploy
+
+```bash
+make docker-up       # build image, start container (hits the external DB via DATABASE_URL)
+make docker-logs
+make docker-rebuild  # force rebuild image and restart
+```
+
+`.env` on the deploy host carries the prod `DATABASE_URL` and is loaded via
+`env_file:` in `docker-compose.yml`, so secrets stay out of git.
 
 Run `make help` for all commands.
 

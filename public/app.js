@@ -132,6 +132,7 @@ function applyTerminal(messageId, status, content) {
   bubble.classList.add(status);
   bubble.innerHTML = marked.parse(content || "");
   scrollToBottom();
+  syncProcessingButtons();
 }
 
 /**

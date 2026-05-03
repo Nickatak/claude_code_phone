@@ -105,7 +105,7 @@ function renderMessage(msg) {
     div.textContent = msg.content || "";
   } else if (msg.status === "running") {
     div.classList.add("running");
-    div.innerHTML = '<span class="thinking-dots"></span>';
+    div.innerHTML = 'Thinking<span class="thinking-dots"></span>';
   } else {
     div.classList.add(msg.status);
     div.innerHTML = marked.parse(msg.content || "");

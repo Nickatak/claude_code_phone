@@ -135,16 +135,22 @@ async function executePrompt(
     const sdkSession = query({ prompt: promptText, options });
 
     for await (const event of sdkSession) {
-      if (event.type === "stream_event") {
-        const sdkEvent = (event as any).event;
-
-        if (
-          sdkEvent?.type === "content_block_delta" &&
-          sdkEvent.delta?.type === "text_delta"
-        ) {
-          session.appendContent(sdkEvent.delta.text);
+      // High-level assistant message: contains the full text content for
+      // this turn in `text` blocks. This is the canonical source for the
+      // assistant's response - more reliable than reconstructing from
+      // streaming text deltas.
+      if (event.type === "assistant") {
+        const blocks = (event as any).message?.content ?? [];
+        for (const block of blocks) {
+          if (block.type === "text" && typeof block.text === "string") {
+            session.appendContent(block.text);
+          }
         }
-
+      } else if (event.type === "stream_event") {
+        // Stream events still drive tool lifecycle (tool_start / partial
+        // input / tool_complete) - we ignore their text deltas because
+        // the assistant event above gives us the full text deterministically.
+        const sdkEvent = (event as any).event;
         const mapped = mapper.map(sdkEvent);
         if (mapped) {
           if (mapped.type === "tool_start") {
@@ -157,6 +163,7 @@ async function executePrompt(
         const resultEvent = event as any;
         const sessionId = resultEvent.session_id || conversation?.sessionId || "";
         await session.complete(sessionId);
+        return;
       }
     }
   } catch (error) {

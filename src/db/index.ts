@@ -38,3 +38,13 @@ export async function runMigrations(): Promise<void> {
     migrationsFolder: path.join(__dirname, "..", "..", "drizzle"),
   });
 }
+
+/**
+ * Drain the connection pool. Call during shutdown after no more queries
+ * will be issued. Safe to call before getDb() ever ran (no-op).
+ */
+export async function closeDb(): Promise<void> {
+  if (pool) {
+    await pool.end();
+  }
+}

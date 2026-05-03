@@ -35,6 +35,8 @@ const PHONE_CLAUDE_MD = fs.readFileSync(
 interface ActiveProcess {
   session: MessageSession;
   abortController: AbortController;
+  /** Resolves when executePrompt finishes (terminal write done). */
+  done: Promise<void>;
 }
 
 /** Active SDK processes keyed by conversation ID. */
@@ -52,6 +54,20 @@ export function stop(conversationId: string): boolean {
 
   active.abortController.abort();
   return true;
+}
+
+/**
+ * Shutdown helper: abort every active SDK process and wait for each one
+ * to finish writing its terminal state to the DB. Used by the signal
+ * handler so partial text and stopped/error transitions land before the
+ * connection pool drains.
+ */
+export async function abortAllAndWait(): Promise<void> {
+  const all = Array.from(activeProcesses.values());
+  for (const p of all) {
+    p.abortController.abort();
+  }
+  await Promise.all(all.map((p) => p.done));
 }
 
 /**
@@ -83,13 +99,13 @@ export async function runPrompt(
   const session = await MessageSession.create(conversationId);
   const abortController = new AbortController();
 
-  activeProcesses.set(conversationId, { session, abortController });
-
   const convId = conversationId;
-  executePrompt(convId, session, promptText, abortController)
+  const done = executePrompt(convId, session, promptText, abortController)
     .catch((error) => {
       console.error(`SDK execution error for ${convId}:`, error);
     });
+
+  activeProcesses.set(conversationId, { session, abortController, done });
 
   return { conversationId: convId, messageId: session.id };
 }

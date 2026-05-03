@@ -9,7 +9,9 @@
 
 import express from "express";
 import path from "path";
-import { runMigrations } from "./db/index";
+import type { Server } from "http";
+import { closeDb, runMigrations } from "./db/index";
+import { abortAllAndWait } from "./sdk/process-manager";
 import { conversationRouter } from "./routes/conversations";
 
 const PORT = parseInt(process.env.PORT || "9800", 10);
@@ -30,11 +32,48 @@ app.get("/{*path}", (_req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
 
-async function main() {
+let server: Server | null = null;
+let shuttingDown = false;
+
+/**
+ * Graceful shutdown: stop taking new HTTP, abort active SDK runs and
+ * wait for their terminal writes, drain the DB pool, exit. Docker
+ * gives ~10s after SIGTERM before SIGKILL - the bounded path here
+ * lands well inside that window.
+ */
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}, shutting down gracefully`);
+
+  if (server) {
+    server.close();
+  }
+
+  try {
+    await abortAllAndWait();
+  } catch (err) {
+    console.error("Error aborting SDK processes:", err);
+  }
+
+  try {
+    await closeDb();
+  } catch (err) {
+    console.error("Error closing DB pool:", err);
+  }
+
+  console.log("Shutdown complete");
+  process.exit(0);
+}
+
+async function main(): Promise<void> {
   await runMigrations();
-  app.listen(PORT, "0.0.0.0", () => {
+  server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Pocket Claude listening on 0.0.0.0:${PORT}`);
   });
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => {

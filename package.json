@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "test": "node --import tsx --env-file=.env --test tests/**/*.test.ts",
     "db:generate": "drizzle-kit generate"
   },
   "keywords": [],

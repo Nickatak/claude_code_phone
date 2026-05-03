@@ -1,3 +1,21 @@
+# ---- Builder: compile TS and resolve production deps ----
+FROM node:24-slim AS builder
+
+WORKDIR /app
+
+# Install all deps (including devDependencies for tsc + drizzle-kit types)
+COPY package.json package-lock.json* tsconfig.json ./
+RUN npm ci
+
+# Compile to dist/
+COPY src/ ./src/
+RUN npm run build
+
+# Drop dev deps in place; the resulting node_modules is what the
+# runtime stage ships.
+RUN npm prune --omit=dev
+
+# ---- Runtime ----
 FROM node:24-slim
 
 # Git for SDK repo operations; curl/jq/ripgrep for the SDK to use
@@ -10,13 +28,12 @@ RUN npm install -g @anthropic-ai/claude-code
 
 WORKDIR /app
 
-# Install dependencies first (layer caching)
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+# Production deps and built artifacts from the builder stage
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY package.json ./
 
-# Copy built application. config/ is mounted at runtime from the host
-# so personal CLAUDE.md never enters the image.
-COPY dist/ ./dist/
+# Static assets and migration files from the build context
 COPY public/ ./public/
 COPY drizzle/ ./drizzle/
 RUN mkdir -p /app/config

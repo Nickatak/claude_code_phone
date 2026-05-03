@@ -52,13 +52,13 @@ build:
 # DOCKER (production stack on dock01: hits pg01)
 # ============================================================================
 
-docker-up: build
+docker-up:
 	docker compose up -d --build
 
 docker-down:
 	docker compose down --remove-orphans
 
-docker-rebuild: build
+docker-rebuild:
 	docker compose up -d --build --force-recreate
 
 docker-logs:

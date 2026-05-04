@@ -5,9 +5,12 @@
  * still valid, otherwise refresh via POST and persist the new tokens
  * atomically before returning.
  *
- * Wired into ManagedQuery as the SDK's `getOAuthToken` callback. With
- * that callback present, the SDK sets CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH
- * and calls back to us when the bundled CLI needs a fresh bearer token.
+ * Called from ManagedQuery.run() before each query() invocation. The
+ * SDK's bundled CLI reads the credentials file at startup; ensuring the
+ * file is fresh before spawning means the CLI sees a valid token. The
+ * SDK does expose a `getOAuthToken` callback option, but the bundled
+ * CLI gates delegation on an entrypoint allowlist that excludes
+ * `sdk-ts`, so that path is dead for our use.
  *
  * See docs/AUTH.md for the broader auth story and the failed-refresh
  * recovery design (currently manual; future in-app re-auth flow).
@@ -96,21 +99,35 @@ async function refreshTokens(
 export async function getAccessToken(
   ctx?: { signal?: AbortSignal },
 ): Promise<string> {
+  console.log("[auth] getAccessToken invoked");
   const creds = readCredentials();
   const oauth = creds.claudeAiOauth;
 
   if (!oauth) {
+    console.error("[auth] no claudeAiOauth in credentials file");
     throw new Error("No claudeAiOauth field in ~/.claude/.credentials.json");
   }
 
-  if (oauth.expiresAt > Date.now() + REFRESH_THRESHOLD_MS) {
+  const now = Date.now();
+  const msUntilExpiry = oauth.expiresAt - now;
+  console.log(
+    `[auth] expiresAt=${new Date(oauth.expiresAt).toISOString()} now=${new Date(now).toISOString()} msUntilExpiry=${msUntilExpiry} threshold=${REFRESH_THRESHOLD_MS}`,
+  );
+
+  if (oauth.expiresAt > now + REFRESH_THRESHOLD_MS) {
+    console.log("[auth] cached token still valid, returning");
     return oauth.accessToken;
   }
+
+  console.log("[auth] token expired or near-expiry, refreshing");
 
   if (!activeRefresh) {
     activeRefresh = (async () => {
       try {
         const refreshed = await refreshTokens(oauth.refreshToken, ctx?.signal);
+        console.log(
+          `[auth] refresh succeeded, new expires_in=${refreshed.expires_in}s, refresh_token rotated=${refreshed.refresh_token !== undefined && refreshed.refresh_token !== oauth.refreshToken}`,
+        );
         const updated: CredentialsFile = {
           ...creds,
           claudeAiOauth: {
@@ -121,11 +138,20 @@ export async function getAccessToken(
           },
         };
         writeCredentialsAtomic(updated);
+        console.log("[auth] credentials file rewritten atomically");
         return updated.claudeAiOauth.accessToken;
+      } catch (err) {
+        console.error(
+          "[auth] refresh failed:",
+          err instanceof Error ? err.message : err,
+        );
+        throw err;
       } finally {
         activeRefresh = null;
       }
     })();
+  } else {
+    console.log("[auth] joining in-flight refresh");
   }
 
   return activeRefresh;

@@ -143,6 +143,12 @@ export class ManagedQuery {
     let resultSessionId = this.resumeSessionId ?? "";
 
     try {
+      // Refresh the credentials file if needed before the SDK spawns
+      // its CLI subprocess. The CLI reads the file at startup; the
+      // SDK's getOAuthToken callback path is gated on an entrypoint
+      // allowlist that excludes ours, so we have to refresh here.
+      await getAccessToken();
+
       const options: Record<string, unknown> = {
         cwd: this.cwd,
         abortController: this.abortController,
@@ -153,7 +159,6 @@ export class ManagedQuery {
           append: PHONE_CLAUDE_MD,
         },
         settingSources: ["project"],
-        getOAuthToken: getAccessToken,
       };
 
       if (this.resumeSessionId) {
@@ -164,6 +169,9 @@ export class ManagedQuery {
         options.pathToClaudeCodeExecutable = pathToClaudeCodeExecutable;
       }
 
+      console.log(
+        `[mq] starting query conv=${this.conversationId} msg=${this.id} cwd=${this.cwd} hasResume=${!!this.resumeSessionId} hasGlibcPath=${!!pathToClaudeCodeExecutable}`,
+      );
       const sdk = query({ prompt, options });
 
       for await (const event of sdk) {
@@ -175,6 +183,9 @@ export class ManagedQuery {
           errors?: string[];
           session_id?: string;
         };
+        console.log(
+          `[mq] result event subtype=${resultEvent.subtype} session_id=${resultEvent.session_id} errors=${JSON.stringify(resultEvent.errors)} resultPreview=${(resultEvent.result ?? "").slice(0, 200)}`,
+        );
         if (resultEvent.session_id) {
           resultSessionId = resultEvent.session_id;
         }
@@ -191,6 +202,10 @@ export class ManagedQuery {
         break;
       }
     } catch (err) {
+      console.error(
+        `[mq] caught error conv=${this.conversationId} msg=${this.id} aborted=${this.abortController.signal.aborted}:`,
+        err,
+      );
       if (this.abortController.signal.aborted) {
         this.status = "stopped";
       } else {

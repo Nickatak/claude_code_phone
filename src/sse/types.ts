@@ -1,25 +1,11 @@
 /**
  * SSE event types pushed to connected clients.
  *
- * Tool events stream as they happen, each tagged with the assistant
- * message they belong to. The assistant message itself emits exactly
- * one terminal event - message_transition - whose `status` field
- * encodes whether it completed, was stopped, or errored.
+ * One terminal event per assistant message. No tool events, no
+ * streaming text deltas - the simplified ManagedQuery surfaces only
+ * "Thinking..." (implicit, from the POST returning a messageId) and
+ * the final terminal state.
  */
-
-export interface ToolStartEvent {
-  type: "tool_start";
-  messageId: string;
-  toolName: string;
-  toolId: string;
-}
-
-export interface ToolCompleteEvent {
-  type: "tool_complete";
-  messageId: string;
-  toolId: string;
-  input: string;
-}
 
 export interface MessageTransitionEvent {
   type: "message_transition";
@@ -28,7 +14,4 @@ export interface MessageTransitionEvent {
   content: string;
 }
 
-export type SSEEvent =
-  | ToolStartEvent
-  | ToolCompleteEvent
-  | MessageTransitionEvent;
+export type SSEEvent = MessageTransitionEvent;

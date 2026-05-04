@@ -6,8 +6,8 @@
  * stopped | error) and the bubble's presentation tracks that status -
  * a running bubble shows animated dots, a terminal bubble shows content.
  *
- * No token streaming. Tool cards stream live, but the assistant's text
- * appears once at terminal - never partial.
+ * No streaming, no tool cards. The server hides tool activity inside
+ * ManagedQuery; the client just sees "Thinking..." and the final text.
  */
 
 // -- State --
@@ -44,9 +44,9 @@ async function api(path, options = {}) {
 // -- SSE connection --
 
 /**
- * Connect to the SSE stream for a conversation. Receives tool events
- * and the message terminal transition as they happen. If the
- * connection drops, the client can catch up via REST - no data is lost.
+ * Connect to the SSE stream for a conversation. Receives one
+ * message_transition event per assistant message. If the connection
+ * drops, the client can catch up via REST - no data is lost.
  */
 function connectSSE(conversationId) {
   disconnectSSE();
@@ -57,14 +57,6 @@ function connectSSE(conversationId) {
     const data = JSON.parse(event.data);
 
     switch (data.type) {
-      case "tool_start":
-        addToolCard(data.messageId, data.toolId, data.toolName);
-        break;
-
-      case "tool_complete":
-        completeToolCard(data.toolId, data.input);
-        break;
-
       case "message_transition":
         applyTerminal(data.messageId, data.status, data.content);
         break;
@@ -90,8 +82,7 @@ function disconnectSSE() {
 // -- Message rendering --
 
 /**
- * Render a message row from the server. Branches on role and status
- * so the same function handles every flavor of bubble:
+ * Render a message row from the server. Branches on role and status:
  *   - user: always terminal, just renders content
  *   - assistant running: placeholder bubble with dots
  *   - assistant terminal: bubble with content (markdown-rendered)
@@ -135,76 +126,6 @@ function applyTerminal(messageId, status, content) {
   syncProcessingButtons();
 }
 
-/**
- * Add a tool card. Tools are children of an assistant message - we
- * insert the card before the parent bubble so it appears chronologically
- * (between the user prompt and the assistant response).
- */
-function addToolCard(messageId, toolId, toolName) {
-  if (document.getElementById(`tool-${toolId}`)) return;
-
-  const card = document.createElement("div");
-  card.className = "tool-card running";
-  card.id = `tool-${toolId}`;
-
-  card.innerHTML = `
-    <div class="tool-header">
-      <span class="tool-name">${escapeHtml(toolName)}</span>
-      <span class="tool-status">running</span>
-    </div>
-    <div class="tool-detail"></div>
-  `;
-
-  card.addEventListener("click", () => {
-    card.classList.toggle("expanded");
-  });
-
-  const parentBubble = messagesContainer.querySelector(
-    `.message.assistant[data-message-id="${cssEscape(messageId)}"]`
-  );
-  if (parentBubble) {
-    messagesContainer.insertBefore(card, parentBubble);
-  } else {
-    messagesContainer.appendChild(card);
-  }
-  scrollToBottom();
-}
-
-/** Mark an existing tool card as complete and populate its detail. */
-function completeToolCard(toolId, input) {
-  const card = document.getElementById(`tool-${toolId}`);
-  if (!card) return;
-
-  card.classList.remove("running");
-  const statusEl = card.querySelector(".tool-status");
-  if (statusEl) statusEl.textContent = "done";
-
-  const detailEl = card.querySelector(".tool-detail");
-  if (detailEl && input) {
-    try {
-      const parsed = JSON.parse(input);
-      detailEl.textContent = formatToolInput(parsed);
-    } catch {
-      detailEl.textContent = input;
-    }
-  }
-}
-
-/**
- * Format tool input JSON into a readable summary.
- * Shows the most relevant fields (file paths, commands) without
- * dumping the entire JSON blob.
- */
-function formatToolInput(input) {
-  if (typeof input !== "object" || input === null) return String(input);
-  if (input.file_path) return input.file_path;
-  if (input.command) return input.command;
-  if (input.pattern) return input.pattern;
-  if (input.query) return input.query;
-  if (input.url) return input.url;
-  return JSON.stringify(input, null, 2);
-}
-
 // -- Processing state --
 
 /**
@@ -235,14 +156,6 @@ async function syncConversationState() {
   const msgs = await api(`/conversations/${currentConversationId}/messages`);
   for (const msg of msgs) {
     renderMessage(msg);
-  }
-
-  const tools = await api(`/conversations/${currentConversationId}/tools`);
-  for (const tool of tools) {
-    addToolCard(tool.messageId, tool.toolId, tool.toolName);
-    if (tool.status !== "running") {
-      completeToolCard(tool.toolId, tool.input);
-    }
   }
 
   syncProcessingButtons();

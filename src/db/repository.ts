@@ -3,17 +3,21 @@
  *
  * The process-manager and routes both need to persist and query data.
  * Rather than scattering drizzle calls across the codebase, everything
- * goes through here. This makes DB access testable and keeps the rest
- * of the app decoupled from the ORM.
+ * goes through here. ManagedQuery itself does its own DB writes (it's
+ * the wrapper that owns assistant message lifecycle); they live in
+ * managed_query.ts rather than here.
  */
 
 import { eq, desc, sql } from "drizzle-orm";
 import { getDb } from "./index";
-import { conversations, messages, toolEvents } from "./schema";
+import { conversations, messages } from "./schema";
 
 // -- Conversations --
 
-export async function createConversation(id: string, cwd: string): Promise<void> {
+export async function createConversation(
+  id: string,
+  cwd: string,
+): Promise<void> {
   const db = getDb();
   await db.insert(conversations).values({
     id,
@@ -24,7 +28,8 @@ export async function createConversation(id: string, cwd: string): Promise<void>
 
 export async function getConversation(conversationId: string) {
   const db = getDb();
-  const rows = await db.select()
+  const rows = await db
+    .select()
     .from(conversations)
     .where(eq(conversations.id, conversationId))
     .limit(1);
@@ -33,7 +38,8 @@ export async function getConversation(conversationId: string) {
 
 export async function listConversations(limit = 50) {
   const db = getDb();
-  return db.select()
+  return db
+    .select()
     .from(conversations)
     .orderBy(desc(conversations.updatedAt))
     .limit(limit);
@@ -42,7 +48,7 @@ export async function listConversations(limit = 50) {
 export async function updateConversationStatus(
   conversationId: string,
   status: "idle" | "running" | "stopped" | "error",
-  sessionId?: string
+  sessionId?: string,
 ): Promise<void> {
   const db = getDb();
   const updates: Record<string, unknown> = {
@@ -52,14 +58,15 @@ export async function updateConversationStatus(
   if (sessionId !== undefined) {
     updates.sessionId = sessionId;
   }
-  await db.update(conversations)
+  await db
+    .update(conversations)
     .set(updates)
     .where(eq(conversations.id, conversationId));
 }
 
 // -- Messages --
 //
-// Assistant message writes happen inside MessageSession (full lifecycle).
+// Assistant message writes happen inside ManagedQuery (full lifecycle).
 // User messages are atomic (no lifecycle), so they go through here.
 
 export async function insertUserMessage(
@@ -79,22 +86,9 @@ export async function insertUserMessage(
 
 export async function getMessages(conversationId: string) {
   const db = getDb();
-  return db.select()
+  return db
+    .select()
     .from(messages)
     .where(eq(messages.conversationId, conversationId))
     .orderBy(messages.createdAt);
-}
-
-// -- Tool events --
-//
-// Tool event writes happen inside MessageSession (each event belongs to
-// exactly one assistant message and shares its lifecycle). Reads stay
-// here for REST catch-up.
-
-export async function getToolEvents(conversationId: string) {
-  const db = getDb();
-  return db.select()
-    .from(toolEvents)
-    .where(eq(toolEvents.conversationId, conversationId))
-    .orderBy(toolEvents.createdAt);
 }

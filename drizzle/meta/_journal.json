@@ -15,6 +15,13 @@
       "when": 1777763686708,
       "tag": "0001_message_fsm",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777884784810,
+      "tag": "0002_simple_thena",
+      "breakpoints": true
     }
   ]
 }

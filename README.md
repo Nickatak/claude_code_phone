@@ -8,5 +8,5 @@ This branch is intentionally minimal — only docs and the TS toolchain. Not for
 
 ```
 npm install
-npx tsx <path/to/your/spike.ts>
+node main.js
 ```

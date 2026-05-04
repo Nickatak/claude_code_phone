@@ -1,4 +1,22 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { get_access_token } from "./auth.js";
+
+// Workaround for SDK variant selection bug (see docs/SDK_ISSUES.md).
+// On glibc systems where npm installed both linux-x64 and linux-x64-musl
+// optional packages, the SDK's runtime detection sometimes picks the
+// musl binary, which fails to exec on glibc. Force the glibc binary
+// when it's present.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const claude_glibc_binary = resolve(
+  __dirname,
+  "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude"
+);
+const path_to_claude_code_executable = existsSync(claude_glibc_binary)
+  ? claude_glibc_binary
+  : undefined;
 
 /**
  * ManagedQuery wraps one SDK query() invocation. Exposes only what the
@@ -39,6 +57,10 @@ export class ManagedQuery {
           abortController: this._abort_controller,
           permissionMode: "bypassPermissions",
           settingSources: [],
+          getOAuthToken: get_access_token,
+          ...(path_to_claude_code_executable && {
+            pathToClaudeCodeExecutable: path_to_claude_code_executable,
+          }),
         },
       });
 

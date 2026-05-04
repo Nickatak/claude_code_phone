@@ -334,6 +334,9 @@ promptInput.addEventListener("keydown", (event) => {
 // emitter drops it - so on resume, pull authoritative state from the DB.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
+  // Mobile browsers may drop the textarea's inline height on suspend/resume,
+  // collapsing a multi-line draft back to a single visible line.
+  if (promptInput.value) autoResize();
   if (!currentConversationId) return;
   if (!messagesContainer.querySelector(".message.assistant.running")) return;
   syncConversationState();

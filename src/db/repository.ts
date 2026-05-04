@@ -17,11 +17,13 @@ import { conversations, messages } from "./schema";
 export async function createConversation(
   id: string,
   cwd: string,
+  title: string,
 ): Promise<void> {
   const db = getDb();
   await db.insert(conversations).values({
     id,
     cwd,
+    title,
     status: "running",
   });
 }

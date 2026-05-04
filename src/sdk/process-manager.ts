@@ -13,6 +13,14 @@ import { ManagedQuery } from "./managed_query";
 
 const activeQueries = new Map<string, ManagedQuery>();
 
+const TITLE_MAX_LEN = 40;
+
+function deriveTitle(promptText: string): string {
+  const flat = promptText.replace(/\s+/g, " ").trim();
+  if (flat.length <= TITLE_MAX_LEN) return flat;
+  return flat.slice(0, TITLE_MAX_LEN - 1).trimEnd() + "…";
+}
+
 export function isRunning(conversationId: string): boolean {
   return activeQueries.has(conversationId);
 }
@@ -43,7 +51,7 @@ export async function runPrompt(
 
   if (!conversationId) {
     conversationId = randomUUID();
-    await repository.createConversation(conversationId, cwd);
+    await repository.createConversation(conversationId, cwd, deriveTitle(promptText));
   } else {
     if (activeQueries.has(conversationId)) {
       throw new Error("Conversation already has an active prompt");

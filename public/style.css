@@ -43,11 +43,6 @@ html, body {
   flex-shrink: 0;
 }
 
-#header h1 {
-  font-size: 16px;
-  font-weight: 600;
-}
-
 .header-left {
   display: flex;
   align-items: center;
@@ -245,6 +240,30 @@ html, body {
 
 .message.assistant strong { color: var(--text); }
 .message.assistant a { color: var(--accent); }
+
+.message.assistant table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0.4em 0;
+  font-size: 0.9em;
+  -webkit-overflow-scrolling: touch;
+}
+
+.message.assistant th,
+.message.assistant td {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.message.assistant th {
+  background: var(--bg);
+  font-weight: 600;
+}
 
 /* --- Tool cards --- */
 

@@ -183,9 +183,6 @@ export class ManagedQuery {
           errors?: string[];
           session_id?: string;
         };
-        console.log(
-          `[mq] result event subtype=${resultEvent.subtype} session_id=${resultEvent.session_id} errors=${JSON.stringify(resultEvent.errors)} resultPreview=${(resultEvent.result ?? "").slice(0, 200)}`,
-        );
         if (resultEvent.session_id) {
           resultSessionId = resultEvent.session_id;
         }
